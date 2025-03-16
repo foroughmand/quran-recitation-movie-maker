@@ -4,10 +4,10 @@ You can create a recitation movie qutomatically with this repository. You need
   2) A background movie to be played at the background of the recitation text.
 
 The main step in this process is the automatic synchronization of Quran text and recitation which is done with 
-(ctc-forced-aligner)[https://github.com/MahmoudAshraf97/ctc-forced-aligner]. The rest is straight forward but implemented in this repository.
+[ctc-forced-aligner](https://github.com/MahmoudAshraf97/ctc-forced-aligner). The rest is straight forward but implemented in this repository.
 
 ## 1. Install
-Install (ctc-forced-aligner)[https://github.com/MahmoudAshraf97/ctc-forced-aligner]:
+Install [ctc-forced-aligner](https://github.com/MahmoudAshraf97/ctc-forced-aligner):
 ```
 pip install git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git
 ```

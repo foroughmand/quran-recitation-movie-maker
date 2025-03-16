@@ -33,6 +33,8 @@ git clone https://github.com/quran/quran.com-frontend-next
 
 ## 3. Preparing background video and audio file
 In this step, we need two variables ${PRJ} and ${SURE_INDEX} to be setted, 
+the recitation sound file `tmp/${PRJ}-sound.mp3` be created.
+Also, the file `tmp/${PRJ}-bg.mp4` will contain the background movie.
 
 Example of creating recitation movie for Sure Taha.
 ```
@@ -55,6 +57,7 @@ ffmpeg -i tmp/${PRJ}-sound.opus tmp/${PRJ}-sound.mp3
 ```
 
 ## 4. Run aligner
+This will create the file `tmp/${PRJ}-sound.txt`.
 ```
 ctc-forced-aligner --audio_path "tmp/${PRJ}-sound.mp3" --text_path "data/quran-simple-plain-${SURE_INDEX}.txt" --language "ara" --alignment_model "jonatasgrosman/wav2vec2-large-xlsr-53-arabic"
 ```
@@ -65,6 +68,7 @@ python src/create_movie.py "data/quran-simple-plain-${SURE_INDEX}.txt" tmp/${PRJ
 ```
 
 ## 6. Merge movies
+This will create the output file `out/${PRJ}.mp4`.
 ```
 cat tmp/${PRJ}_files.txt | sed 's/^tmp\//file /g' > tmp/${PRJ}_files_ffmpeg.txt
 ffmpeg -f concat -safe 0 -i tmp/${PRJ}_files_ffmpeg.txt -c copy out/${PRJ}.mp4

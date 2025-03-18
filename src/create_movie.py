@@ -66,7 +66,10 @@ parser.add_argument('--interline', type=int, default=50, help='Spacing between l
 parser.add_argument('--files', help='List of created files.')
 
 parser.add_argument('--text_render_method', default='quran.com', help='How to render ayes. Options: quran.com, file.')
-
+parser.add_argument('--bg_clip_start', help='If present, bg file will be clipped.')
+parser.add_argument('--bg_clip_end', help='If present, bg file will be clipped.')
+parser.add_argument('--size_x', type=int, default=1280, help='X-resolution.')
+parser.add_argument('--size_y', type=int, default=780, help='X-resolution.')
 
 
 
@@ -84,12 +87,16 @@ audio_clip = AudioFileClip(args.audio_file)
 # Resize the background image if necessary
 # bg_image_clip = ImageClip("q-taha.jpg")
 bg_image_clip = VideoFileClip(args.background_video).without_audio()
+if args.bg_clip_start is not None and args.bg_clip_end is not None:
+    bg_image_clip = bg_image_clip.subclipped(start_time=args.bg_clip_start, end_time=args.bg_clip_end)
+    print(f'Clipping the bg video to {args.bg_clip_start}-{args.bg_clip_end}')
+
 from moviepy.video.fx import Loop
-
-
 bg_image_clip = bg_image_clip.with_effects([Loop(audio_clip.duration)])
 # .loop(duration = audio_clip.duration)
-bg_image_clip = bg_image_clip.resized((1280, 720))  # DEBUG (1280, 720)
+bg_image_clip = bg_image_clip.resized((args.size_x, args.size_y))  # DEBUG (1280, 720)
+
+x = VideoFileClip(args.background_video)
 
 ## Set the duration of the background image to match the audio
 #bg_image_clip = bg_image_clip.with_duration(audio_clip.duration)
@@ -114,7 +121,10 @@ def finalize(chunk_start_time, chunk_end_time, bg_image_clip, text_clips, chunk_
     
     video = CompositeVideoClip([bg_image_clip_chunk] + text_clips + extra_clips)
     fn = args.output_prefix + f"{chunk_index}.mp4"
-    video.write_videofile(fn, codec='libx264', fps=args.fps, audio_codec='aac') #DEBUG fps
+    # if args.output_prefix + f"{chunk_index}" in ["tmp/q-anbia-abkar_part_104", "tmp/q-anbia-abkar_part_103", "tmp/q-anbia-abkar_part_97", "tmp/q-anbia-abkar_part_87", "tmp/q-anbia-abkar_part_84", "tmp/q-anbia-abkar_part_82", "tmp/q-anbia-abkar_part_79", "tmp/q-anbia-abkar_part_78", "tmp/q-anbia-abkar_part_74", "tmp/q-anbia-abkar_part_73", "tmp/q-taha-abkar_part_134", "tmp/q-anbia-abkar_part_47", "tmp/q-najm-abkar_part_32", "tmp/q-taha-abkar_part_131", "tmp/q-najm-abkar_part_31", "tmp/q-taha-abkar_part_130", "tmp/q-anbia-abkar_part_44", "tmp/q-anbia-abkar_part_43", "tmp/q-najm-abkar_part_26", "tmp/q-anbia-abkar_part_39", "tmp/q-taha-abkar_part_123", "tmp/q-najm-abkar_part_23", "tmp/q-anbia-abkar_part_36", "tmp/q-taha-abkar_part_121", "tmp/q-anbia-abkar_part_30", "tmp/q-taha-abkar_part_114", "tmp/q-anbia-abkar_part_24", "tmp/q-taha-abkar_part_97", "tmp/q-taha-abkar_part_96", "tmp/q-taha-abkar_part_94", "tmp/q-taha-abkar_part_87", "tmp/q-anbia-abkar_part_3", "tmp/q-taha-abkar_part_86", "tmp/q-taha-abkar_part_81", "tmp/q-taha-abkar_part_77", "tmp/q-taha-abkar_part_72", "tmp/q-taha-abkar_part_71", "tmp/q-taha-abkar_part_53", "tmp/q-taha-abkar_part_47", "tmp/q-taha-abkar_part_40", "tmp/q-taha-abkar_part_39"]: #DEBUG  or chunk_index == 1
+    # if chunk_index == 1: #DEBUG  or 
+    if True:
+        video.write_videofile(fn, codec='libx264', fps=args.fps, audio_codec='aac') #DEBUG fps
 
     # audio_subclip.close()
     # bg_image_clip_chunk.close()
@@ -230,6 +240,7 @@ def method_2():
         current_word += 1
         if current_word >= len(aye_s):
             next_start_time = ayat_data[i+1][0] if i+1 < len(ayat_data) else audio_clip.duration
+            add_besmellah = False
 
             if args.text_render_method == 'quran.com':
 
@@ -239,13 +250,18 @@ def method_2():
                 api_url = f"https://api.quran.com/api/v4/verses/by_key/{args.surah_number}:{current_aye+1}?words=true"
                 response = requests.get(api_url)
 
+                if current_aye == 0:
+                    response_besmellah = requests.get(f"https://api.quran.com/api/v4/verses/by_key/1:1?words=true")
+                    add_besmellah = True
+
                 if response.status_code == 200:
                     ayah_data = response.json()
                     words = ayah_data["verse"]["words"]
                     h_page = ayah_data["verse"]["page_number"]
                     
                     # Extract the Unicode characters for the words in the ayah
-                    h_text = "".join(word["code_v1"] for word in words)
+                    h_text = " ".join(word["code_v1"] for word in words)
+                    h_text = h_text[:(len(h_text)-2)] + h_text[len(h_text)-1]
 
                     # h_font = "quran.com-frontend-next/public/fonts/quran/hafs/v1/ttf/p{h_page}.ttf"
                     h_font = args.font.format(h_page=h_page)
@@ -273,16 +289,54 @@ def method_2():
                     stroke_color=args.stroke_color, 
                     stroke_width=args.stroke_width,
                     interline=args.interline,
-                    size=(w - args.margin_h, h - args.margin_v), 
+                    # size=(w - args.margin_h, h - args.margin_v), 
+                    size=(w - args.margin_h, None), 
                     method='caption',
                     text_align="center")
                         .with_start(chunk_start_time - chunk_start_time)
                         .with_duration(next_start_time - chunk_start_time)
                         .with_position('center'))
             text_clips.append(txt_clip)
+            print(txt_clip.size)
+
+            if add_besmellah:
+                ayah_data = response_besmellah.json()
+                words = ayah_data["verse"]["words"]
+                h_page = ayah_data["verse"]["page_number"]
+                
+                h_text = " ".join(word["code_v1"] for word in words[:-1])
+                h_font = args.font.format(h_page=h_page)
+
+                besmellah_clip = (TextClip(
+                        text=h_text,
+                        font_size=args.font_size * 1.3, 
+                        font=h_font, 
+                        color=args.color, 
+                        stroke_color=args.stroke_color, 
+                        stroke_width=args.stroke_width,
+                        interline=args.interline,
+                        # size=(w - args.margin_h, h - args.margin_v), 
+                        size=(w - args.margin_h, None), 
+                        method='caption',
+                        text_align="center")
+                            .with_start(chunk_start_time - chunk_start_time)
+                            .with_duration(next_start_time - chunk_start_time)
+                            .with_position('center'))
+                main_w, main_h = txt_clip.size
+                sec_w, sec_h = besmellah_clip.size
+
+                total_height = main_h + sec_h + args.interline
+
+                final_clip = CompositeVideoClip([
+                    txt_clip.with_position(('center', sec_h + args.interline)),
+                    besmellah_clip.with_position(('center', 0))
+                ], size=(w - args.margin_h, total_height)).with_position(('center', (h - total_height) / 2))
+
+                del text_clips[-1]
+                text_clips.append(final_clip)
+
             
             finalize(chunk_start_time, next_start_time, bg_image_clip, text_clips, current_aye+1, [label_clip.with_duration(next_start_time - chunk_start_time)])
-                # break
             current_aye += 1
             current_word = 0
             text_clips = []

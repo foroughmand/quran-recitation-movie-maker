@@ -479,11 +479,10 @@ SURE_INDEX=114
 PRJ=q-$SURE_INDEX-abkar
 mv out/${PRJ}.mp4 tmp/${PRJ}_.mp4
 ffmpeg -i tmp/${PRJ}_.mp4 -to 30.00 out/${PRJ}.mp4
-
-
 ```
 
 ‍‍‍```
+
 for sure in {1..114}; do wget https://server6.mp3quran.net/abkr/`printf "%03d\n" $sure`.mp3 -O tmp/q-${sure}-abkar-sound-0.mp3; done
 wget https://player.iranseda.ir/downloadnewfile/?VALID=TRUE&attid=450564&q=10&g=443942&t=1&w=46 -O tmp/q-45-abkar-sound-0.mp4
 ffmpeg -y -i tmp/q-45-abkar-sound-0.mp4 tmp/q-45-abkar-sound-0.mp3

@@ -1,12 +1,14 @@
 # Automatic Quran Recitation Movie Creation
-You can create a recitation movie qutomatically with this repository. You need 
-  1) Recitation audio (you can find free recitation audio on internet) 
-  2) A background movie to be played at the background of the recitation text.
+You can create a recitation movie automatically with this repository. You need 
+  1) Recitation audio (you can find free recitation audio files on the internet) 
+  2) A background video to accompany the recitation text.
 
 The main step in this process is the automatic synchronization of Quran text and recitation which is done with 
-[ctc-forced-aligner](https://github.com/MahmoudAshraf97/ctc-forced-aligner). The rest is straight forward but implemented in this repository.
+[ctc-forced-aligner](https://github.com/MahmoudAshraf97/ctc-forced-aligner). The rest is straightforward and has been implemented in this repository.
 
 ## 1. Install
+Make sure `ffmpeg` and `yt-dlp` are installed
+
 Install [ctc-forced-aligner](https://github.com/MahmoudAshraf97/ctc-forced-aligner):
 ```
 pip install git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git
@@ -32,9 +34,8 @@ git clone https://github.com/quran/quran.com-frontend-next
 ```
 
 ## 3. Preparing background video and audio file
-In this step, we need two variables ${PRJ} and ${SURE_INDEX} to be setted, 
-the recitation sound file `tmp/${PRJ}-sound.wav` be created.
-Also, the file `tmp/${PRJ}-bg.mp4` will contain the background movie.
+In this step, the two variables `${PRJ}` and `${SURE_INDEX}` must be set, and the recitation audio file `tmp/${PRJ}-sound.wav` must be created.
+Also, the file `tmp/${PRJ}-bg.mp4` will contain the background video.
 
 ## 4. Run aligner
 This will create the file `tmp/${PRJ}-sound.txt`.
@@ -43,14 +44,14 @@ ctc-forced-aligner --audio_path "tmp/${PRJ}-sound.wav" --text_path "data/quran-s
 ```
 
 ## 5. Create the final movie
-This is replaced for some examples above.
+This is used in the examples above.
 ```
 python src/create_movie.py "data/quran-simple-plain-${SURE_INDEX}.txt" tmp/${PRJ}-sound.txt tmp/${PRJ}-sound.wav out/${PRJ}.mp4 tmp/${PRJ}-bg.mp4 ${SURE_INDEX} --font quran.com-frontend-next/public/fonts/quran/hafs/v1/ttf/p{h_page}.ttf --font_size 100 --files tmp/${PRJ}_files.txt --title `printf "%03d\n" $SURE_INDEX`" surah" --title_font quran.com-frontend-next/public/fonts/quran/surah-names/v1/sura_names.ttf --title_font_size 100 --size_x 1920 --size_y 1080 --interline 30 --stroke_width 5 
 
 ```
 
 
-# Customized Instructions for Individual Sure
+# Customized Instructions for Individual Surahs
 
 ### Backgrounds
 
@@ -168,7 +169,7 @@ ffmpeg -i tmp/${PRJ}-sound-0.mp3 tmp/${PRJ}-sound.wav
 ctc-forced-aligner --audio_path "tmp/${PRJ}-sound.wav" --text_path "data/quran-simple-plain-${SURE_INDEX}.txt" --language "ara" --alignment_model "jonatasgrosman/wav2vec2-large-xlsr-53-arabic"
 ```
 
-Following will fix a problem in the alignment and creates the movie parts.
+The following steps will fix an alignment issue and create the movie parts.
 ```
 ffmpeg -i tmp/${PRJ}-sound.wav -ss 00:27:33.36 -to 00:29:05.95 tmp/${PRJ}-sound-p2.wav
 # 1654
@@ -222,7 +223,7 @@ python src/create_movie.py "data/quran-simple-plain-${SURE_INDEX}.txt" tmp/${PRJ
 
 ### Sure Asr
 
-Example of creating recitation movie for Sure Asr.
+Example: Creating a recitation movie for Sure Asr.
 ```
 # 103 Asr
 PRJ=q-asr-abkar
@@ -491,13 +492,30 @@ wget https://player.iranseda.ir/downloadnewfile/?VALID=TRUE&attid=450998&q=10&g=
 ffmpeg -y -i tmp/q-49-abkar-sound-0.mp4 tmp/q-49-abkar-sound-0.mp3
 ```
 
+### Doa
+```
+PRJ=abuhamze-samavati
+../azan-tv/bin/yt-dlp -x https://youtu.be/aJgD-438KVY -o tmp/${PRJ}-sound
+# wget https://server6.mp3quran.net/abkr/014.mp3 -O tmp/${PRJ}-sound-0.mp3
+ffmpeg -i tmp/${PRJ}-sound.mp4 tmp/${PRJ}-sound.wav
+
+
+ctc-forced-aligner --audio_path "tmp/${PRJ}-sound.wav" --text_path "data/abuhamze.txt" --language "ara" --alignment_model "jonatasgrosman/wav2vec2-large-xlsr-53-persian"
+python src/create_movie.py "data/abuhamze.txt" tmp/${PRJ}-sound.txt tmp/${PRJ}-sound.wav out/${PRJ}.mp4 tmp/bg3.mp4 0 --font HM_XNiloofar.ttf --font_size 100 --files tmp/${PRJ}_files.txt --title "دعای ابوحمزه ثمالی" --title_font HM_XNiloofar.ttf --title_font_size 100 --size_x 1920 --size_y 1080 --bg_clip_start "$bg_seek_start_hhmmss" --bg_clip_end 00:00:00 --interline 30 --stroke_width 5 --audio_skip 0.0 --text_render_method file --no-add_aye_number 
+
+# TEST:
+ffmpeg -i tmp/${PRJ}-sound.wav -to 01:00 tmp/${PRJ}-sound-test.wav
+ctc-forced-aligner --audio_path "tmp/${PRJ}-sound-test.wav" --text_path tmp/abuhamze-test.txt --language "ara" --alignment_model "jonatasgrosman/wav2vec2-large-xlsr-53-persian"
+
+```
+
 # Next steps
-* Darkening background may produce pretier movies.
+* Darkening the background may produce more visually appealing movies.
 * A version which changes the background for each verse might produce better focus.
-* Some recitations go to previous verses. Shown verse could also go back.
+* Some recitations return to previous verses; the displayed verse could also revert accordingly.
 * Current word in the verse could be highlighted. The problem was that the alignment between recitation and words is not so accurate.
 
 # Done
-* There is a very tiny silence between verses, which sould be fixed.
+* There is a very tiny silence between verses, which should be fixed.
 * For long verses, the font size could be automatically decreased.
-* Some videos are not palying the whole sound. 
+* Some videos are not playing the whole sound. 

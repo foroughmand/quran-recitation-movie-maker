@@ -369,6 +369,7 @@ for i, (start_time, end_time, text) in enumerate(ayat_data):
                 raise RuntimeError(f"Error fetching ayah data {response}. \n{api_url}")
         elif args.text_render_method == 'file':
             h_text = text_data[current_aye]
+            h_font = args.font
             if args.add_aye_number:
                 h_text += f'﴿{number_persian(current_aye+1)}﴾'
         else:

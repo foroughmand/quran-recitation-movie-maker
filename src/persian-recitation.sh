@@ -331,7 +331,7 @@ python3 src/create_movie_persian.py \
   --translation_dir "$SURE_DIR/translation_text" \
   --font "quran.com-frontend-next/public/fonts/quran/hafs/v1/ttf/p{h_page}.ttf" \
   --font_size 100 \
-  --title "$(printf '%03d' "$SURE_INDEX") surah" \
+  --title "سوره $(sed -n "${SURE_INDEX}p" "$REPO_ROOT/data/sura_names_fa.txt" 2>/dev/null | sed 's/^[0-9]*[[:space:]]*//' || echo "$SURE_INDEX")" \
   --title_font "quran.com-frontend-next/public/fonts/quran/surah-names/v1/sura_names.ttf" \
   --title_font_size 100 \
   --size_x 1920 \

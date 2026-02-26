@@ -43,33 +43,31 @@ def to_hindi_numerals(number):
     return "".join(hindi_digits[int(d)] if d.isdigit() else d for d in str(number))
 
 
-def fetch_surah_data():
-    """Fetch surah metadata from Quran.com API (v4)."""
-    import requests
-    url = "https://api.quran.com/api/v4/chapters"
-    response = requests.get(url, headers={"Accept": "application/json"}, timeout=15)
-    response.raise_for_status()
-    chapters = response.json().get("chapters", [])
-    return {
-        ch["id"]: {
-            "name": ch["name_arabic"],
-            "latin": ch["name_simple"],
-            "english": ch["translated_name"]["name"],
-        }
-        for ch in chapters
-    }
+def load_sura_names_fa():
+    """Load Persian sura names from data/sura_names_fa.txt (index -> name)."""
+    path = os.path.join(REPO_ROOT, "data", "sura_names_fa.txt")
+    names = {}
+    if os.path.isfile(path):
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split(None, 1)
+                if len(parts) >= 2:
+                    names[int(parts[0])] = parts[1]
+    return names
 
 
 def get_video_config_from_sura(file_path: str, sura_index: int, reciter: str = "ادریس ابکر") -> dict:
-    """Build video metadata from sura index (Quran.com API)."""
-    sura_data = fetch_surah_data()
-    sura = sura_data.get(sura_index)
-    if not sura:
-        raise ValueError(f"Surah index {sura_index} not found.")
-    sura_name = sura["name"]
-    title = f"تلاوت سوره {sura_name} - {reciter}"
+    """Build video metadata from sura index (Persian sura name, default playlist)."""
+    names_fa = load_sura_names_fa()
+    sura_name_fa = names_fa.get(sura_index)
+    if not sura_name_fa:
+        sura_name_fa = str(sura_index)
+    title = f"تلاوت سوره {sura_name_fa} - {reciter}"
     description = (
-        f"تلاوت سوره {sura_name} ({to_hindi_numerals(sura_index)}) - ترتیل\n"
+        f"تلاوت سوره {sura_name_fa} ({to_hindi_numerals(sura_index)}) - ترتیل\n"
         f"قاری: {reciter}\n"
         f"با تصویر پس‌زمینه طبیعت"
     )
@@ -77,7 +75,7 @@ def get_video_config_from_sura(file_path: str, sura_index: int, reciter: str = "
         "video_path": file_path,
         "title": title,
         "description": description,
-        "tags": ["تلاوت قرآن", f"سوره {sura_name}", reciter],
+        "tags": ["تلاوت قرآن", f"سوره {sura_name_fa}", reciter],
         "playlist": "17208565",
         "visibility": "public",
     }
@@ -174,34 +172,25 @@ def main():
 
     ap = AparatUploader(cookies_path)
     tags_str = config["tags"] if isinstance(config["tags"], str) else "-".join(config["tags"])
-    playlist_val = config.get("playlist", "")
-    # Aparat API: use new_playlist for playlist name (create/add); use playlistid only for numeric ID
+    playlist_val = (config.get("playlist") or "").strip()
+    # Aparat API: numeric ID -> playlistid (add to existing playlist); non-numeric -> new_playlist (name)
     is_numeric_id = playlist_val.isdigit() if isinstance(playlist_val, str) else False
-    if is_numeric_id:
-        ap.upload(
-            videopath=config["video_path"],
-            title=config["title"],
-            description=config["description"],
-            progress_callback=progress_callback,
-            tags=tags_str,
-            playlist=playlist_val,
-            playlistid=[playlist_val],
-            video_pass=video_pass,
-            category=args.category or "",
-        )
-    else:
-        ap.upload(
-            videopath=config["video_path"],
-            title=config["title"],
-            description=config["description"],
-            progress_callback=progress_callback,
-            tags=tags_str,
-            new_playlist=playlist_val or "",
-            playlist_temp=playlist_val or "",
-            playlistid="",
-            video_pass=video_pass,
-            category=args.category or "",
-        )
+    upload_kw = dict(
+        videopath=config["video_path"],
+        title=config["title"],
+        description=config["description"],
+        progress_callback=progress_callback,
+        tags=tags_str,
+        video_pass=video_pass,
+        category=args.category or "",
+    )
+    if is_numeric_id and playlist_val:
+        upload_kw["playlist"] = playlist_val
+        upload_kw["playlistid"] = [playlist_val]
+    elif playlist_val:
+        upload_kw["new_playlist"] = playlist_val
+        upload_kw["playlist_temp"] = playlist_val
+    ap.upload(**upload_kw)
     print("\nUpload finished.")
 
 

@@ -148,7 +148,8 @@ class TextInfo:
 
 
 # Function to create full text overlay with multiple texts
-def create_full_text_image(main_text_info, additional_text_info, short_text_info, size, margin, interline, filename):
+# translation_below_info: optional TextInfo drawn below main text (e.g. Persian translation)
+def create_full_text_image(main_text_info, additional_text_info, short_text_info, size, margin, interline, filename, translation_below_info=None):
     img = Image.new('RGBA', size, (0, 0, 0, 0))  # Solid black background
     draw = ImageDraw.Draw(img)
     
@@ -188,6 +189,14 @@ def create_full_text_image(main_text_info, additional_text_info, short_text_info
             additional_font = ImageFont.truetype(additional_text_info.font, additional_text_info.font_size)
             y_min -= draw.textbbox((0, 0), additional_text_info.text, font=additional_font)[3] + interline
         
+        # Reserve space for translation below
+        if translation_below_info is not None:
+            trans_font = ImageFont.truetype(translation_below_info.font, translation_below_info.font_size)
+            trans_h = draw.textbbox((0, 0), translation_below_info.text, font=trans_font)[3] + interline
+            if y_main_text + total_text_height + (len(lines)-1) * interline + trans_h > size[1] - margin[1]:
+                pass  # may need to shrink; handled by loop
+            y_min = min(y_min, size[1] - margin[1] - (total_text_height + (len(lines)-1) * interline + trans_h))
+        
         if y_min > min_top or main_text_info.font_size < 1: break
 
         # if main_text_info.font_size < 66: break
@@ -196,6 +205,8 @@ def create_full_text_image(main_text_info, additional_text_info, short_text_info
         interline *= 0.9
         if additional_text_info is not None:
             additional_text_info.font_size *= 0.9
+        if translation_below_info is not None:
+            translation_below_info.font_size = int(translation_below_info.font_size * 0.9)
     
     # Draw additional text (if provided)
     if additional_text_info is not None:
@@ -212,6 +223,12 @@ def create_full_text_image(main_text_info, additional_text_info, short_text_info
                   stroke_width=main_text_info.stroke_width, stroke_fill=main_text_info.stroke_color, anchor="mm")
         y_text += draw.textbbox((0, 0), line, font=main_font)[3] + interline
     
+    # Draw translation below main (if provided)
+    if translation_below_info is not None:
+        trans_font = ImageFont.truetype(translation_below_info.font, translation_below_info.font_size)
+        y_trans = y_text + interline
+        draw.text((size[0] // 2, y_trans), translation_below_info.text, font=trans_font, fill=(255, 255, 255),
+                  stroke_width=translation_below_info.stroke_width, stroke_fill=translation_below_info.stroke_color, anchor="mm")
     
     img.save(filename, format='PNG')
     return filename

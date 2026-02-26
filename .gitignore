@@ -2,3 +2,10 @@ data/
 out/
 quran.com-frontend-next/
 tmp/
+# YouTube OAuth (do not commit)
+client_secrets.json
+token.json
+# Aparat cookies (do not commit)
+www.aparat.com_cookies.txt
+www.aparat.com_cookies.json
+cookies.txt

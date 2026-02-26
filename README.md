@@ -509,6 +509,38 @@ ctc-forced-aligner --audio_path "tmp/${PRJ}-sound-test.wav" --text_path tmp/abuh
 
 ```
 
+# Persian recitation movie (with translation)
+
+To build a movie for one sura that shows **Arabic ayah + Persian translation** on screen and plays **recitation then translation** per ayah (using sources like [tanzil.ir](https://tanzil.ir/#59:5)):
+
+1. **Set sura number and run steps manually** (see `src/persian-recitation.sh`):
+   ```bash
+   export s=59
+   bash src/persian-recitation.sh
+   ```
+   Then run each **STEP** block in that script in order (uncomment and execute).
+
+2. **STEP 1 – Download data**  
+   Recitation and (optional) translation audio, plus Persian translation text, into `data/persian-recitation/sura_<N>/`:
+   ```bash
+   python3 src/download_tanzil_sura.py "$SURE_INDEX" "$AYAS" "$SURE_DIR"
+   ```
+   Default URLs (tanzil.ir/tanzil.net) are used unless overridden: `--recitation-url`, `--translation-audio-url`, `--translation-text-url`.
+
+3. **STEP 2 – Build combined audio and segment mapping**  
+   Concatenate per-ayah recitation (and translation) into one WAV and write `segment_mapping.txt`:
+   ```bash
+   python3 src/build_persian_audio.py "$SURE_DIR" "$SURE_INDEX" "$AYAS"
+   ```
+
+4. **STEP 3 – Prepare background**  
+   Set `BG_VIDEO` and ensure the background file exists (e.g. download with yt-dlp or symlink).
+
+5. **STEP 4 – Create the movie**  
+   Run `create_movie_persian.py` with the combined WAV, segment mapping, translation text directory, and background (see the full command in `src/persian-recitation.sh`).
+
+Prerequisites: `ffmpeg`, `python3`, `pydub`, `requests`, `PIL`, `ffmpeg` (Python). Fonts and `data/` layout as in the main README (e.g. `quran.com-frontend-next`, `font/HM_XNiloofar.ttf`).
+
 # Next steps
 * Darkening the background may produce more visually appealing movies.
 * A version which changes the background for each verse might produce better focus.

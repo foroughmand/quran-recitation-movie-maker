@@ -1,6 +1,9 @@
+import argparse
 import os
+import sys
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
+from google.auth.exceptions import RefreshError
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 import requests
@@ -68,18 +71,24 @@ SCOPES = ["https://www.googleapis.com/auth/youtube.upload", "https://www.googlea
 
 def get_authenticated_service():
     creds = None
-    # The file token.json stores the user's access and refresh tokens, and is
-    # created automatically when the authorization flow completes for the first time.
     if os.path.exists("token.json"):
         creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-    # If there are no (valid) credentials available, prompt the user to log in.
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
+            try:
+                creds.refresh(Request())
+            except RefreshError:
+                # Token revoked or invalid_grant (e.g. password changed, app permissions revoked)
+                print("Token expired or revoked. Removing token.json and opening browser to sign in again.", file=sys.stderr)
+                try:
+                    os.remove("token.json")
+                except OSError:
+                    pass
+                flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS_FILE, SCOPES)
+                creds = flow.run_local_server(port=0)
         else:
             flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS_FILE, SCOPES)
             creds = flow.run_local_server(port=0)
-        # Save the credentials for the next run
         with open("token.json", "w") as token:
             token.write(creds.to_json())
     return build("youtube", "v3", credentials=creds)
@@ -147,22 +156,76 @@ def add_video_to_playlist(youtube, video_id, playlist_title):
     ).execute()
     print(f"✅ Added to playlist: {playlist_title}")
 
-import sys
-if __name__ == "__main__":
+def main():
+    parser = argparse.ArgumentParser(
+        description="Upload a video to YouTube (OAuth). Use either --file + metadata options, or sura_index + file for auto metadata.",
+    )
+    parser.add_argument("--file", "-f", help="Video file path to upload.")
+    parser.add_argument("--title", "-t", help="Video title.")
+    parser.add_argument("--description", "-d", default="", help="Video description.")
+    parser.add_argument(
+        "--visibility",
+        "-v",
+        choices=("public", "private", "unlisted"),
+        default="private",
+        help="Visibility: public, private, or unlisted (default: private).",
+    )
+    parser.add_argument(
+        "--playlist",
+        "-p",
+        action="append",
+        default=[],
+        help="Playlist name(s) to add the video to (can be repeated). Creates playlist if missing.",
+    )
+    parser.add_argument("--tags", action="append", default=[], help="Tag (can be repeated).")
+    parser.add_argument(
+        "sura_index",
+        nargs="?",
+        type=int,
+        default=None,
+        help="Optional: sura number for auto title/description (use with file path only).",
+    )
+    parser.add_argument(
+        "file_positional",
+        nargs="?",
+        default=None,
+        help="Video file path (alternative to --file).",
+    )
+    args = parser.parse_args()
+
+    file_path = args.file or args.file_positional
+    if not file_path:
+        parser.error("Provide video file via --file or as positional argument.")
+    if not os.path.isfile(file_path):
+        parser.error(f"File not found: {file_path}")
+
+    if args.sura_index is not None and not args.title:
+        video_config = get_video_config(file_path, args.sura_index)
+    else:
+        video_config = {
+            "video_path": file_path,
+            "title": args.title or os.path.splitext(os.path.basename(file_path))[0],
+            "description": args.description or "",
+            "made_for_kids": False,
+            "category": "22",
+            "visibility": args.visibility,
+            "tags": args.tags if args.tags else [],
+            "playlist": args.playlist if args.playlist else [],
+        }
+
     try:
-        
-        sura_index = int(sys.argv[1])
-        file_path = sys.argv[2]
-
-        video_config = get_video_config(file_path, sura_index)
-
         youtube = get_authenticated_service()
         upload_video(youtube, video_config)
-
     except HttpError as e:
-        print(f"❌ YouTube API error: {e}")
+        print(f"❌ YouTube API error: {e}", file=sys.stderr)
+        sys.exit(1)
     except Exception as e:
-        print(f"❌ Error: {e}")
+        print(f"❌ Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
 
 
 # # exmaples/upload_video.py

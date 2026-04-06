@@ -9,3 +9,6 @@ token.json
 www.aparat.com_cookies.txt
 www.aparat.com_cookies.json
 cookies.txt
+**/__pycache__
+src/to-be-removed/
+.DS_Store

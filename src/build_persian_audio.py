@@ -6,6 +6,7 @@ ayah, one segment for recitation then one for translation. So we have
 
 Usage:
   python3 src/build_persian_audio.py <sura_dir> <sura_index> <num_ayas>
+  python3 src/build_persian_audio.py --skip-translation <sura_dir> <sura_index> <num_ayas>
 
 Example:
   python3 src/build_persian_audio.py data/persian-recitation/sura_59 59 24
@@ -29,12 +30,17 @@ except ImportError:
 
 
 def main():
-    if len(sys.argv) < 4:
+    args = sys.argv[1:]
+    skip_translation = False
+    if args and args[0] == "--skip-translation":
+        skip_translation = True
+        args = args[1:]
+    if len(args) < 3:
         print(__doc__.strip())
         sys.exit(1)
-    sura_dir = sys.argv[1].rstrip("/")
-    sura_index = int(sys.argv[2])
-    num_ayas = int(sys.argv[3])
+    sura_dir = args[0].rstrip("/")
+    sura_index = int(args[1])
+    num_ayas = int(args[2])
 
     rec_dir = os.path.join(sura_dir, "recitation_audio")
     trans_dir = os.path.join(sura_dir, "translation_audio")
@@ -62,14 +68,15 @@ def main():
         segments.append((start_rec, current, a))
         combined += rec
 
-        # Translation segment (optional)
-        trans_file = os.path.join(trans_dir, f"{a}.mp3")
-        if os.path.isfile(trans_file):
-            trans = AudioSegment.from_file(trans_file)
-            start_trans = current
-            current += len(trans) / 1000.0
-            segments.append((start_trans, current, a))
-            combined += trans
+        # Translation segment (optional; skipped when --skip-translation)
+        if not skip_translation:
+            trans_file = os.path.join(trans_dir, f"{a}.mp3")
+            if os.path.isfile(trans_file):
+                trans = AudioSegment.from_file(trans_file)
+                start_trans = current
+                current += len(trans) / 1000.0
+                segments.append((start_trans, current, a))
+                combined += trans
 
     combined.export(combined_path, format="wav")
     with open(mapping_path, "w", encoding="utf-8") as f:

@@ -46,27 +46,18 @@ if [[ ! -f "$VIDEO_FILE" ]]; then
   exit 1
 fi
 
-# Get sura name (Persian/Arabic) from Quran.com API — name_arabic is the standard name used in Persian
-SURENAME=$(curl -sS "https://api.quran.com/api/v4/chapters/${SURE}" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    ch = d.get('chapter', {})
-    # Prefer name_arabic (same script as Persian: حمد، بقره، آل عمران، ...)
-    print(ch.get('name_arabic', '') or ch.get('name_simple', ''))
-except Exception:
-    print('')
-" 2>/dev/null || echo "")
-
+# Persian sura name from data/sura_names_fa.txt (same as movie and upload scripts)
+SURA_NAMES_FA="${REPO_ROOT}/data/sura_names_fa.txt"
+SURENAME=$(sed -n "${SURE}p" "$SURA_NAMES_FA" 2>/dev/null | sed 's/^[0-9]*[[:space:]]*//')
 if [[ -z "$SURENAME" ]]; then
-  echo "Could not fetch sura name for $SURE; using placeholder."
-  SURENAME="سوره"
+  echo "Could not get Persian sura name for $SURE; using number."
+  SURENAME="$SURE"
 fi
 
 TITLE="ترجمه گویای سوره ${SURENAME} (فولادوند)"
 DESCRIPTION="سوره ${SURE} - ${SURENAME} - ترجمه گویا"
-# Aparat tags: ترجمه قرآن, قرآن, سوره نام
-APARAT_TAGS="ترجمه قرآن-قرآن-${SURENAME}"
+# Aparat tags: ترجمه قرآن, قرآن, سوره SURENAME (third tag must be "سوره نام")
+APARAT_TAGS="ترجمه قرآن-قرآن-سوره ${SURENAME}"
 
 if [[ "$DEST" == "Y" || "$DEST" == "YA" ]]; then
   echo "Uploading to YouTube: $VIDEO_FILE"
@@ -80,8 +71,8 @@ fi
 
 if [[ "$DEST" == "A" || "$DEST" == "YA" ]]; then
   echo "Uploading to Aparat: $VIDEO_FILE"
-  # Aparat category 6 = مذهبی (religious). Playlist by name (new_playlist) or set APARAT_PLAYLIST_ID for numeric ID.
-  APARAT_PL="${APARAT_PLAYLIST_ID:-ترجمه گویای قرآن}"
+  # Aparat category 6 = مذهبی (religious). Playlist: set APARAT_PLAYLIST_ID to numeric ID to add to existing, or use name (default matches YouTube).
+  APARAT_PL="${APARAT_PLAYLIST_ID:-ترجمه گویای قرآن (فولادوند)}"
   python3 src/upload-aparat.py \
     --file "$VIDEO_FILE" \
     --title "$TITLE" \

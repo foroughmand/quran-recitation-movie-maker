@@ -1,223 +1,70 @@
 #!/usr/bin/env python3
 """
-Create Persian recitation movie: Arabic ayah + Persian translation on screen,
-with segment-based timing (recitation then translation per ayah).
+Create a Persian translation-only-voice movie for one sura: ayah-by-ayah content
+(Arabic text + translation, same wrapping and font shrinkage as juz script) but
+audio is only Persian translation (no Arabic recitation).
+
+- Plays only the translation segments from combined.wav (no recitation).
+- Each frame shows Arabic ayah + translation (create_full_text_image_persian), with optional bismillah on first ayah.
+- For suras 2–8 and 10–114: optional first segment = bismillah (Arabic + translation on screen, translation audio only; no ayah number).
+
+  How to run debug (first 3 ayahs, black background, 5 s per ayah; no background file needed):
+    From repo root (pass a placeholder for background, e.g. none):
+      python3 src/create_movie_persian.py \\
+        data/quran-simple-plain-59.txt \\
+        data/persian-recitation/sura_59/segment_mapping.txt \\
+        data/persian-recitation/sura_59/combined.wav \\
+        out/debug-p59.mp4 \\
+        none \\
+        59 \\
+        --translation_dir data/persian-recitation/sura_59/translation_text \\
+        --title "059 surah" --translation_font font/HM_XNiloofar.ttf \\
+        --translation_font_size 48 --show_page --audio translation --debug
+    Or from persian-recitation.sh: add --debug to the python3 line in Step 4 (background is still
+    passed but ignored in debug).
 """
+
 import argparse
 import os
-import random
-import re
 import sys
+import tempfile
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from create_movie_persian_juz import (
+    TextInfo,
+    create_full_text_image_persian,
+    fetch_ayah_words,
+    fetch_besmellah_no_verse_number,
+    to_persian_numerals,
+    _get_audio_duration_seconds,
+)
+
+import re
 
 import ffmpeg
-import requests
-from dataclasses import dataclass
-from PIL import Image, ImageDraw, ImageFont
 
 
-@dataclass
-class TextInfo:
-    text: str
-    font: str
-    font_size: int
-    font_color: str
-    stroke_width: int
-    stroke_color: str
+def _strip_leading_ayah_number(text: str) -> str:
+    """Remove leading ayah number from translation text (e.g. '۱. ' or '1. '). Used for added bismillah so no ayah number is shown."""
+    if not text or not text.strip():
+        return text
+    # Strip optional spaces, then digits (ASCII 0-9 or Arabic-Indic ۰-۹), then optional period/dot and space
+    return re.sub(r"^\s*[\d۰-۹]+\s*[.\u06D4]?\s*", "", text).strip()
 
 
-def wrap_text_to_lines(draw, text: str, font, max_width: int):
-    """Split text into lines that fit within max_width (word wrap)."""
-    words = text.split()
-    lines = []
-    current_line = ""
-    for word in words:
-        test_line = f"{current_line} {word}".strip() if current_line else word
-        if draw.textbbox((0, 0), test_line, font=font)[2] <= max_width:
-            current_line = test_line
-        else:
-            if current_line:
-                lines.append(current_line)
-            current_line = word
-    if current_line:
-        lines.append(current_line)
-    return lines
+def _strip_any_ayah_number(text: str) -> str:
+    """Remove any leading or trailing ayah number (Arabic ٠-٩, Arabic-Indic ۰-۹, ASCII 0-9, with optional period/parens). For bismillah display."""
+    if not text or not text.strip():
+        return text
+    # Leading: digits + optional period/parens + space
+    text = re.sub(r"^\s*[\d۰-۹٠-٩]+\s*[.\u06D4()\[\]]?\s*", "", text)
+    # Trailing: space + optional parens + digits + optional period
+    text = re.sub(r"\s*[(\[]?\s*[\d۰-۹٠-٩]+\s*[.)\]\u06D4]?\s*$", "", text)
+    return text.strip()
 
 
-def create_full_text_image_persian(
-    main_text_info,
-    additional_text_info,
-    short_text_info,
-    size,
-    margin,
-    filename,
-    translation_below_info=None,
-    interline_ratio=0.28,
-):
-    """Draw main (Arabic), optional above (besmellah), short (title), optional below (translation, wrapped).
-    Line spacing (interline) is derived from main font size * interline_ratio so it scales with text size.
-    """
-    img = Image.new("RGBA", size, (0, 0, 0, 0))
-    draw = ImageDraw.Draw(img)
-    short_font = (
-        ImageFont.truetype(short_text_info.font, short_text_info.font_size)
-        if short_text_info
-        else None
-    )
-    min_top = margin[1]
-    if short_text_info is not None:
-        draw.text(
-            (size[0] - margin[0], margin[1]),
-            short_text_info.text,
-            font=short_font,
-            fill=(255, 255, 255),
-            stroke_fill=short_text_info.stroke_color,
-            stroke_width=short_text_info.stroke_width,
-            anchor="ra",
-        )
-        min_top += draw.textbbox((0, 0), short_text_info.text, font=short_font)[3]
-
-    max_width = size[0] - 2 * margin[0]
-
-    while True:
-        interline = max(2, int(main_text_info.font_size * interline_ratio))
-        main_font = ImageFont.truetype(main_text_info.font, main_text_info.font_size)
-        words = main_text_info.text.split()
-        lines = []
-        current_line = ""
-        for word in words:
-            test_line = f"{current_line} {word}".strip()
-            if draw.textbbox((0, 0), test_line, font=main_font)[2] < max_width:
-                current_line = test_line
-            else:
-                lines.append(current_line)
-                current_line = word
-        if current_line:
-            lines.append(current_line)
-
-        total_text_height = sum(
-            draw.textbbox((0, 0), line, font=main_font)[3] for line in lines
-        ) + (len(lines) - 1) * interline
-
-        trans_lines = []
-        trans_height = 0
-        if translation_below_info is not None:
-            trans_font = ImageFont.truetype(
-                translation_below_info.font, translation_below_info.font_size
-            )
-            trans_lines = wrap_text_to_lines(
-                draw, translation_below_info.text, trans_font, max_width
-            )
-            trans_height = sum(
-                draw.textbbox((0, 0), ln, font=trans_font)[3] for ln in trans_lines
-            ) + (len(trans_lines) - 1) * interline if trans_lines else 0
-            trans_height += interline  # gap above translation block
-
-        y_main_text = (
-            size[1]
-            - total_text_height
-            + draw.textbbox((0, 0), lines[0], font=main_font)[3]
-            - trans_height
-        ) // 2
-        y_min = y_main_text - draw.textbbox((0, 0), lines[0], font=main_font)[3] // 2
-        if additional_text_info is not None:
-            additional_font = ImageFont.truetype(
-                additional_text_info.font, additional_text_info.font_size
-            )
-            y_min -= (
-                draw.textbbox((0, 0), additional_text_info.text, font=additional_font)[3]
-                + interline
-            )
-        y_min = min(
-            y_min,
-            size[1] - margin[1] - (total_text_height + trans_height),
-        )
-        if y_min > min_top or main_text_info.font_size < 1:
-            break
-        main_text_info.font_size = int(main_text_info.font_size * 0.9)
-        if additional_text_info is not None:
-            additional_text_info.font_size = int(additional_text_info.font_size * 0.9)
-        if translation_below_info is not None:
-            translation_below_info.font_size = int(
-                translation_below_info.font_size * 0.9
-            )
-
-    interline = max(2, int(main_text_info.font_size * interline_ratio))
-    main_font = ImageFont.truetype(main_text_info.font, main_text_info.font_size)
-    if translation_below_info is not None:
-        trans_font = ImageFont.truetype(
-            translation_below_info.font, translation_below_info.font_size
-        )
-        trans_lines = wrap_text_to_lines(
-            draw, translation_below_info.text, trans_font, max_width
-        )
-    else:
-        trans_lines = []
-
-    if additional_text_info is not None:
-        additional_font = ImageFont.truetype(
-            additional_text_info.font, additional_text_info.font_size
-        )
-        y_additional_text = (
-            y_main_text
-            - draw.textbbox((0, 0), additional_text_info.text, font=additional_font)[3]
-            // 2
-            - draw.textbbox((0, 0), lines[0], font=main_font)[3] // 2
-            - interline
-        )
-        draw.text(
-            (size[0] // 2, y_additional_text),
-            additional_text_info.text,
-            font=additional_font,
-            fill=(255, 255, 255),
-            stroke_fill=additional_text_info.stroke_color,
-            stroke_width=additional_text_info.stroke_width,
-            anchor="mm",
-        )
-    y_text = y_main_text
-    for line in lines:
-        draw.text(
-            (size[0] // 2, y_text),
-            line,
-            font=main_font,
-            fill=(255, 255, 255),
-            stroke_width=main_text_info.stroke_width,
-            stroke_fill=main_text_info.stroke_color,
-            anchor="mm",
-        )
-        y_text += draw.textbbox((0, 0), line, font=main_font)[3] + interline
-    if trans_lines:
-        y_trans = y_text + interline
-        for ln in trans_lines:
-            draw.text(
-                (size[0] // 2, y_trans),
-                ln,
-                font=trans_font,
-                fill=(255, 255, 255),
-                stroke_width=translation_below_info.stroke_width,
-                stroke_fill=translation_below_info.stroke_color,
-                anchor="mm",
-            )
-            y_trans += draw.textbbox((0, 0), ln, font=trans_font)[3] + interline
-    img.save(filename, format="PNG")
-    return filename
-
-
-def time_to_seconds(time_str):
-    if isinstance(time_str, (int, float)):
-        return float(time_str)
-    match = re.match(r"(?:(\d+):)?(?:(\d+):)?(\d+)(?:\.(\d+))?", str(time_str))
-    if not match:
-        raise ValueError(f"Invalid time format: {time_str}")
-    hh = int(match.group(1)) if match.group(1) else 0
-    mm = int(match.group(2)) if match.group(2) else 0
-    ss = int(match.group(3)) if match.group(3) else 0
-    ms = match.group(4) if match.group(4) else "0"
-    ms = int(ms.ljust(3, "0"))
-    return hh * 3600 + mm * 60 + ss + ms / 1000
-
-
-def parse_segment_mapping(path):
-    """Return list of (start_sec, end_sec, ayah_number)."""
+def parse_segment_mapping(path: str) -> list[tuple[float, float, int]]:
+    """Return list of (start_sec, end_sec, ayah_number) from segment_mapping.txt."""
     out = []
     with open(path, "r", encoding="utf-8") as f:
         for line in f:
@@ -230,242 +77,341 @@ def parse_segment_mapping(path):
     return out
 
 
-def fetch_ayah_text(surah_number: int, ayah_number: int, font_pattern: str):
-    """Get Arabic ayah text and font path from Quran.com API (code_v1 words)."""
-    api_url = f"https://api.quran.com/api/v4/verses/by_key/{surah_number}:{ayah_number}?words=true"
-    r = requests.get(api_url, timeout=15)
-    r.raise_for_status()
-    data = r.json()
-    words = data["verse"]["words"]
-    page = data["verse"]["page_number"]
-    h_text = " ".join(w["code_v1"] for w in words)
-    h_text = h_text[: (len(h_text) - 2)] + h_text[len(h_text) - 1]
-    font = font_pattern.format(h_page=page)
-    return h_text, font
+def translation_only_segments(
+    segments: list[tuple[float, float, int]],
+) -> list[tuple[float, float, int]]:
+    """From rec1, trans1, rec2, trans2, ... keep only translation segments (indices 1, 3, 5, ...)."""
+    return [seg for i, seg in enumerate(segments) if i % 2 == 1]
 
 
-def fetch_besmellah(font_pattern: str):
-    """Besmellah (1:1) for first ayah."""
-    r = requests.get(
-        "https://api.quran.com/api/v4/verses/by_key/1:1?words=true", timeout=15
-    )
-    r.raise_for_status()
-    data = r.json()
-    words = data["verse"]["words"]
-    page = data["verse"]["page_number"]
-    h_text = " ".join(w["code_v1"] for w in words[:-1])
-    font = font_pattern.format(h_page=page)
-    return h_text, font
-
-
-def main():
-    p = argparse.ArgumentParser(
-        description="Create Persian recitation movie (Arabic + translation, segment-based)."
-    )
-    p.add_argument("text_file", help="Arabic text file (one ayah per line; used for count only if no API).")
-    p.add_argument("segment_mapping", help="Segment mapping: start_sec end_sec ayah_number per line.")
-    p.add_argument("audio_file", help="Combined WAV (recitation+translation per ayah).")
-    p.add_argument("output", help="Output video path.")
-    p.add_argument("background_video", help="Background video path.")
-    p.add_argument("surah_number", type=int, help="Sura number (1–114).")
-    p.add_argument("--translation_dir", required=True, help="Directory with translation_text/1.txt, 2.txt, ...")
-    p.add_argument("--font", default="quran.com-frontend-next/public/fonts/quran/hafs/v1/ttf/p{h_page}.ttf")
-    p.add_argument("--font_size", type=int, default=100)
-    p.add_argument("--title", default="")
-    p.add_argument("--title_font", default="quran.com-frontend-next/public/fonts/quran/surah-names/v1/sura_names.ttf")
-    p.add_argument("--title_font_size", type=int, default=100)
-    p.add_argument("--translation_font", default="font/HM_XNiloofar.ttf")
-    p.add_argument("--translation_font_size", type=int, default=48)
-    p.add_argument("--size_x", type=int, default=1920)
-    p.add_argument("--size_y", type=int, default=1080)
-    p.add_argument("--margin_h", type=int, default=200)
-    p.add_argument("--margin_v", type=int, default=20)
-    p.add_argument("--interline", type=int, default=30, help="Unused when --interline_ratio is used (default).")
-    p.add_argument("--interline_ratio", type=float, default=0.28, help="Line spacing = font_size * this (reduces gap when font is small).")
-    p.add_argument("--stroke_width", type=int, default=5)
-    p.add_argument("--stroke_color", default="black")
-    p.add_argument("--bg_clip_start", default="0")
-    p.add_argument("--audio_skip", type=float, default=0.0)
-    p.add_argument("--fps", type=int, default=30)
-    p.add_argument(
-        "--ayes",
-        "--pages",
-        dest="ayes",
-        type=str,
-        default=None,
-        help="Only include these ayahs (e.g. 1:5:10 for ayahs 1, 5, 10). Colon-separated.",
-    )
-    p.add_argument(
-        "--audio",
-        choices=("both", "recitation", "translation"),
-        default="both",
-        help="Which voice to include: both (default), only recitation, or only translation.",
-    )
-    args = p.parse_args()
-
-    segments = parse_segment_mapping(args.segment_mapping)
-    if not segments:
-        print("No segments in mapping file.")
-        sys.exit(1)
-
-    if args.ayes:
-        aye_set = {int(x.strip()) for x in args.ayes.split(":") if x.strip()}
-        segments = [(s, e, a) for s, e, a in segments if a in aye_set]
-        if not segments:
-            print("No segments left after filtering by --ayes.")
-            sys.exit(1)
-        segments.sort(key=lambda x: x[0])
-        print(f"Filtered to ayahs {sorted(aye_set)}: {len(segments)} segments")
-
-    # Filter by voice: segment order is rec_1, trans_1, rec_2, trans_2, ... (even index = recitation)
-    trim_ranges = None  # (start, end) per kept segment for building concat audio
-    if args.audio != "both":
-        if args.audio == "recitation":
-            segments_kept = [(s, e, a) for i, (s, e, a) in enumerate(segments) if i % 2 == 0]
-        else:  # translation
-            segments_kept = [(s, e, a) for i, (s, e, a) in enumerate(segments) if i % 2 == 1]
-        if not segments_kept:
-            print(f"No segments left for --audio {args.audio}.")
-            sys.exit(1)
-        print(f"Audio: {args.audio} only ({len(segments_kept)} segments)")
-        trim_ranges = [(s, e) for s, e, a in segments_kept]
-        new_segments = []
-        t = 0.0
-        for (s, e, a) in segments_kept:
-            dur = e - s
-            new_segments.append((t, t + dur, a))
-            t += dur
-        segments = new_segments
+def recitation_only_segments(
+    segments: list[tuple[float, float, int]],
+) -> list[tuple[float, float, int]]:
+    """Keep only recitation segments.
+    If mapping is rec+trans per ayah (2*N segments): use even indices (0, 2, 4, ...).
+    If mapping is rec-only (N segments, one per ayah): use all segments (no translation gaps).
+    """
+    num_ayas = max(seg[2] for seg in segments) if segments else 0
+    layout = "unknown"
+    if num_ayas and len(segments) == 2 * num_ayas:
+        layout = "rec+trans"
+        chosen = [seg for i, seg in enumerate(segments) if i % 2 == 0]
     else:
-        segments_kept = None
+        layout = "rec-only-or-mixed"
+        chosen = list(segments)
+    print(
+        "  [segments] total=%d, num_ayas=%d, layout=%s, using=%d"
+        % (len(segments), num_ayas, layout, len(chosen)),
+        file=sys.stderr,
+    )
+    # Log a few sample segments for debugging
+    for i, (s, e, ay) in enumerate(chosen[:5]):
+        print(
+            "    [seg%02d] ayah=%d start=%.3f end=%.3f dur=%.3f"
+            % (i, ay, s, e, e - s),
+            file=sys.stderr,
+        )
+    return chosen
 
-    audio_start_sec = segments[0][0]
-    audio_end_sec = segments[-1][1]
-    if trim_ranges is None and args.ayes:
-        for i in range(len(segments)):
-            s, e, a = segments[i]
-            segments[i] = (s - audio_start_sec, e - audio_start_sec, a)
-        audio_end_sec = audio_end_sec - audio_start_sec
-        audio_start_sec = 0
 
-    need_concat_audio = trim_ranges is not None
+def run_sura(args: argparse.Namespace) -> None:
+    """Create Persian sura movie: Arabic + translation text on screen; audio = translation voice or recitation (--audio)."""
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-    translation_dir = args.translation_dir.rstrip("/")
-    if not os.path.isdir(translation_dir):
-        print(f"Translation dir not found: {translation_dir}")
+    segments = parse_segment_mapping(args.mapping_file)
+    if not segments:
+        print("No segments in mapping file.", file=sys.stderr)
         sys.exit(1)
+    # High-level mapping info
+    num_ayas = max(seg[2] for seg in segments) if segments else 0
+    print(
+      "[mapping] file=%s total_segments=%d num_ayas=%d first=%s last=%s"
+      % (
+          args.mapping_file,
+          len(segments),
+          num_ayas,
+          ("%.3f-%.3f ayah=%d" % segments[0]) if segments else "n/a",
+          ("%.3f-%.3f ayah=%d" % segments[-1]) if segments else "n/a",
+        ),
+        file=sys.stderr,
+    )
 
-    bg_clip_start_seconds = time_to_seconds(args.bg_clip_start)
-    img_overlays = []
+    audio_mode = (getattr(args, "audio", None) or "translation").strip().lower()
+    if audio_mode == "recitation":
+        active_segments = recitation_only_segments(segments)
+        if not active_segments:
+            print("No recitation segments in mapping file.", file=sys.stderr)
+            sys.exit(1)
+        print("  Audio: recitation only (Arabic recitation, no translation voice)")
+    else:
+        active_segments = translation_only_segments(segments)
+        if not active_segments:
+            print("No translation segments in mapping file.", file=sys.stderr)
+            sys.exit(1)
+        print("  Audio: translation only (Persian translation voice)")
+    if args.debug:
+        active_segments = active_segments[:3]
+        print("Debug mode: only first 3 segments.", file=sys.stderr)
 
-    for seg_start, seg_end, ayah_number in segments:
-        # Ayah Arabic text from API
-        h_text, h_font = fetch_ayah_text(
-            args.surah_number, ayah_number, args.font
+    def path_or_repo(p: str) -> str:
+        return p if os.path.isabs(p) else os.path.join(repo_root, p)
+
+    title_font = path_or_repo(args.title_font)
+    trans_font = path_or_repo(args.translation_font)
+    translation_dir = args.translation_dir or os.path.join(
+        repo_root, "data", "persian-recitation", "sura_%d" % args.surah_number, "translation_text"
+    )
+    sura_dir = os.path.dirname(translation_dir)
+    data_root = os.path.join(repo_root, "data", "persian-recitation")
+
+    # Optional bismillah translation segment: suras 2–8 and 10–114 only (not 1, not 9)
+    add_bismillah_trans = args.surah_number in (*range(2, 9), *range(10, 115))
+    bismillah_trans_audio = os.path.join(sura_dir, "translation_audio", "0.mp3")
+    bismillah_trans_text_path = os.path.join(data_root, "sura_1", "translation_text", "1.txt")
+    besm_arabic_text, besm_page = "", 1
+    if add_bismillah_trans and os.path.isfile(bismillah_trans_audio) and os.path.isfile(bismillah_trans_text_path):
+        besm_arabic_text, besm_page = fetch_besmellah_no_verse_number()
+        with open(bismillah_trans_text_path, "r", encoding="utf-8") as f:
+            bismillah_trans_text = f.read().strip()
+    else:
+        bismillah_trans_text = None
+        bismillah_trans_audio = None
+
+    # Build list of clips: (kind, img_path, audio_src, ayah_or_none)
+    clips = []
+    # Bismillah clip only for translation mode (recitation mode has bismillah inside first recitation segment)
+    if audio_mode != "recitation" and besm_arabic_text and bismillah_trans_text and os.path.isfile(bismillah_trans_audio):
+        fd = tempfile.mkstemp(suffix=".png", prefix="persian_bismillah_")
+        os.close(fd[0])
+        bism_img = fd[1]
+        besm_font_path = path_or_repo(args.font.format(h_page=besm_page))
+        besm_arabic_display = _strip_any_ayah_number(besm_arabic_text)
+        bismillah_trans_display = _strip_any_ayah_number(bismillah_trans_text)
+        create_full_text_image_persian(
+            size=(args.size_x, args.size_y),
+            margin_h=args.margin_h,
+            margin_v=args.margin_v,
+            interline=args.interline,
+            main_text=TextInfo(besm_arabic_display, besm_font_path, args.font_size, "white", args.stroke_width, "black"),
+            translation_below=TextInfo(bismillah_trans_display, trans_font, args.translation_font_size, "white", args.stroke_width, "black"),
+            short_text_right=(args.title or "%03d surah" % args.surah_number).strip(),
+            short_font_path=title_font,
+            short_font_size=args.title_font_size,
+            short_text_left="",
+            short_left_font_path=None,
+            short_left_font_size=args.translation_font_size,
+            besmellah=None,
+            filename=bism_img,
         )
-        aye_text_info = TextInfo(
-            h_text, h_font, args.font_size, "white",
-            args.stroke_width, args.stroke_color
-        )
-        # Show Bismillah above first ayah only for suras that start with it:
-        # not sura 1 (Al-Hamd: first ayah is already Bismillah) and not sura 9 (no Bismillah).
-        besmellah_text_info = None
-        if ayah_number == 1 and args.surah_number != 1 and args.surah_number != 9:
-            b_text, b_font = fetch_besmellah(args.font)
-            besmellah_text_info = TextInfo(
-                b_text, b_font, int(args.font_size * 1.3), "white",
-                args.stroke_width, args.stroke_color
-            )
-        sure_name_text_info = TextInfo(
-            args.title or "", args.title_font, args.title_font_size,
-            "white", 3, "#0a0a0a"
-        )
-        # Translation text from file
-        trans_path = os.path.join(translation_dir, f"{ayah_number}.txt")
-        translation_text = ""
+        clips.append(("bismillah", bism_img, bismillah_trans_audio, None))
+        print("  Bismillah (Arabic + translation; no ayah number, no page number)")
+
+    # Prefetch besmellah for first-ayah segments (suras 2–8, 10–114); use no-verse-number so besmellah line has no ayah number
+    besm_text, besm_font_path = "", ""
+    if args.surah_number not in (1, 9):
+        besm_text, besm_page_num = fetch_besmellah_no_verse_number()
+        besm_font_path = path_or_repo(args.font.format(h_page=besm_page_num))
+
+    for start, end, ayah in active_segments:
+        arabic_text, page = fetch_ayah_words(args.surah_number, ayah)
+        main_font_path = path_or_repo(args.font.format(h_page=page))
+
+        trans_path = os.path.join(translation_dir, "%d.txt" % ayah)
+        trans_text = ""
         if os.path.isfile(trans_path):
             with open(trans_path, "r", encoding="utf-8") as f:
-                translation_text = f.read().strip()
-        translation_below_info = None
-        if translation_text:
-            translation_below_info = TextInfo(
-                translation_text,
-                args.translation_font,
-                args.translation_font_size,
+                trans_text = f.read().strip()
+
+        page_label = "صفحه " + to_persian_numerals(page) if args.show_page else ""
+        sura_label = (args.title or "%03d surah" % args.surah_number).strip()
+        add_besmellah_here = ayah == 1 and args.surah_number not in (1, 9) and besm_text
+        besmellah_info = None
+        if add_besmellah_here:
+            besmellah_info = TextInfo(
+                besm_text,
+                besm_font_path,
+                int(args.font_size * 1.3),
                 "white",
-                max(1, args.stroke_width // 2),
-                args.stroke_color,
+                args.stroke_width,
+                "black",
             )
 
-        r = random.randint(100000, 999999)
-        temp_img = f"tmp/temp_text_persian_{ayah_number}_{r}.png"
-        os.makedirs("tmp", exist_ok=True)
+        fd = tempfile.mkstemp(suffix=".png", prefix="persian_ayah_")
+        os.close(fd[0])
+        img_path = fd[1]
         create_full_text_image_persian(
-            aye_text_info,
-            besmellah_text_info,
-            sure_name_text_info,
-            (args.size_x, args.size_y),
-            (args.margin_h, args.margin_v),
-            temp_img,
-            translation_below_info=translation_below_info,
-            interline_ratio=args.interline_ratio,
+            size=(args.size_x, args.size_y),
+            margin_h=args.margin_h,
+            margin_v=args.margin_v,
+            interline=args.interline,
+            main_text=TextInfo(arabic_text, main_font_path, args.font_size, "white", args.stroke_width, "black"),
+            translation_below=TextInfo(trans_text, trans_font, args.translation_font_size, "white", args.stroke_width, "black") if trans_text else None,
+            short_text_right=sura_label,
+            short_font_path=title_font,
+            short_font_size=args.title_font_size,
+            short_text_left=page_label,
+            short_left_font_path=trans_font if page_label else None,
+            short_left_font_size=args.translation_font_size,
+            besmellah=besmellah_info,
+            filename=img_path,
         )
-        img_overlays.append((temp_img, seg_start, seg_end))
+        clips.append(("ayah", img_path, (start, end), ayah))
+        print("  Ayah %d (Arabic + translation): %.1f–%.1fs" % (ayah, start, end))
 
-    # Single output with overlays and audio (trimmed when --ayes or concat when --audio recitation/translation)
-    input_video = ffmpeg.input(
-        args.background_video, ss=bg_clip_start_seconds
-    ).video
-    resized = input_video.filter("scale", args.size_x, args.size_y)
-    if need_concat_audio:
-        # Concat only the kept segments (recitation or translation) from full combined.wav
-        full_audio = ffmpeg.input(args.audio_file).audio
-        trimmed = [
-            full_audio.filter("atrim", start=s, end=e).filter("asetpts", "PTS-STARTPTS")
-            for s, e in trim_ranges
-        ]
-        input_audio = ffmpeg.concat(*trimmed, n=len(trimmed), v=0, a=1)
-    elif args.ayes:
-        input_audio = ffmpeg.input(
-            args.audio_file,
-            ss=audio_start_sec,
-            t=audio_end_sec - audio_start_sec,
-        )
-    else:
-        input_audio = ffmpeg.input(args.audio_file)
-    overlays = resized
-    for img_fn, start_t, end_t in img_overlays:
-        img = ffmpeg.input(img_fn)
-        overlays = ffmpeg.overlay(
-            overlays,
-            img,
-            enable=f"between(t,{start_t + args.audio_skip},{end_t + args.audio_skip})",
+    # Build one video per clip (image + audio), then concat
+    segment_mp4s = []
+    debug_sec = 5.0  # in debug mode, cap each segment to this many seconds
+    use_bg = not args.debug and args.background_video and (not isinstance(args.background_video, str) or args.background_video.strip().lower() != "none")
+    bg_pos = float(args.bg_clip_start) if use_bg else 0.0
+
+    for i, item in enumerate(clips):
+        kind, img_path, audio_src, ayah = item
+        if kind == "bismillah":
+            audio_in = ffmpeg.input(audio_src).audio
+            seg_dur = _get_audio_duration_seconds(audio_src) if os.path.isfile(audio_src) else 0.0
+            if args.debug:
+                audio_in = audio_in.filter("atrim", duration=debug_sec)
+                seg_dur = min(seg_dur, debug_sec) if seg_dur else debug_sec
+        else:
+            start, end = audio_src
+            dur = end - start
+            if args.debug:
+                dur = min(dur, debug_sec)
+            audio_in = ffmpeg.input(args.audio_file, ss=start + args.audio_skip, t=dur).audio
+            seg_dur = dur
+
+        # Reset audio timestamps so each segment starts at t=0 (concat stays correct).
+        audio_in = audio_in.filter("asetpts", "PTS-STARTPTS")
+
+        if not use_bg:
+            video_stream = ffmpeg.input(
+                "color=c=black:s=%dx%d:d=3600" % (args.size_x, args.size_y),
+                f="lavfi",
+            ).video
+        else:
+            # Advance background per segment so it stays continuous across ayahs
+            video_stream = ffmpeg.input(args.background_video, ss=bg_pos).video
+            if seg_dur and seg_dur > 0:
+                video_stream = video_stream.filter("trim", duration=seg_dur).filter("setpts", "PTS-STARTPTS")
+        video_stream = video_stream.filter("scale", args.size_x, args.size_y)
+
+        img_in = ffmpeg.input(img_path).video
+        vid = ffmpeg.overlay(
+            video_stream,
+            img_in,
             x="(main_w-overlay_w)/2",
             y="(main_h-overlay_h)/2",
         )
-    total_duration = (
-        (audio_end_sec - audio_start_sec + args.audio_skip)
-        if (args.ayes or need_concat_audio)
-        else (img_overlays[-1][2] + args.audio_skip)
-    )
-    out = ffmpeg.output(
-        overlays,
-        input_audio,
-        args.output,
-        t=total_duration,
-        shortest=None,
-        vcodec="libx264",
-        acodec="aac",
-        r=args.fps,
-        pix_fmt="yuv420p",
-    )
-    out.run(overwrite_output=True)
-    for img_fn, _, _ in img_overlays:
+        seg_mp4 = args.output_path + ".seg_%d.mp4" % i
+        segment_mp4s.append(seg_mp4)
+        out = ffmpeg.output(
+            vid,
+            audio_in,
+            seg_mp4,
+            vcodec="libx264",
+            acodec="aac",
+            r=30,
+            pix_fmt="yuv420p",
+            # Flag only; when present, ffmpeg stops at shortest stream.
+            shortest=None,
+        )
+        out = out.overwrite_output()
         try:
-            os.remove(img_fn)
-        except OSError:
-            pass
-    print("Generated", args.output)
+            out.run(quiet=True)
+        except ffmpeg.Error as e:
+            err = (e.stderr or b"").decode("utf-8", errors="replace") if isinstance(e.stderr, bytes) else str(e.stderr or "")
+            for _c in clips:
+                try:
+                    os.remove(_c[1])
+                except OSError:
+                    pass
+            for p in segment_mp4s:
+                try:
+                    os.remove(p)
+                except OSError:
+                    pass
+            raise RuntimeError("FFmpeg failed: %s" % err) from e
+        if use_bg and seg_dur and seg_dur > 0:
+            bg_pos += seg_dur
+
+    # Concat all segment mp4s with a very short audio crossfade so boundaries sound continuous
+    CROSSFADE_DUR = 0.02  # 20 ms overlap at each boundary (keeps audio smooth, minimizes A/V offset)
+    inputs = [ffmpeg.input(seg) for seg in segment_mp4s]
+    video_out = ffmpeg.concat(*[inp.video for inp in inputs], n=len(inputs), v=1, a=0)
+    audio_out = inputs[0].audio
+    for i in range(1, len(inputs)):
+        audio_out = ffmpeg.filter(
+            [audio_out, inputs[i].audio],
+            "acrossfade",
+            d=CROSSFADE_DUR,
+            c1="tri",
+            c2="tri",
+        )
+    try:
+        out = ffmpeg.output(
+            video_out,
+            audio_out,
+            args.output_path,
+            vcodec="libx264",
+            acodec="aac",
+            r=30,
+            pix_fmt="yuv420p",
+        )
+        out = out.overwrite_output()
+        out.run(quiet=True)
+    except ffmpeg.Error as e:
+        err = (e.stderr or b"").decode("utf-8", errors="replace") if isinstance(e.stderr, bytes) else str(e.stderr or "")
+        raise RuntimeError("FFmpeg concat failed: %s" % err) from e
+    finally:
+        for img_path in [c[1] for c in clips]:
+            try:
+                os.remove(img_path)
+            except OSError:
+                pass
+        for seg in segment_mp4s:
+            try:
+                os.remove(seg)
+            except OSError:
+                pass
+
+    print("Wrote %s" % args.output_path)
+
+
+def parse_sura_args() -> argparse.Namespace:
+    ap = argparse.ArgumentParser(
+        description="Create Persian translation-only movie (translation voice + text only, no Arabic)."
+    )
+    ap.add_argument("text_file", help="Path to quran-simple-plain-{sura}.txt (unused; kept for compat).")
+    ap.add_argument("mapping_file", help="Path to segment_mapping.txt (start end ayah per line).")
+    ap.add_argument("audio_file", help="Path to combined.wav.")
+    ap.add_argument("output_path", help="Output MP4 path.")
+    ap.add_argument("background_video", help="Background video path.")
+    ap.add_argument("surah_number", type=int, help="Sura number (1–114).")
+    ap.add_argument("--translation_dir", default="", help="Directory with 1.txt, 2.txt, ... (and 0.txt for bismillah if used).")
+    ap.add_argument("--font", default="quran.com-frontend-next/public/fonts/quran/hafs/v1/ttf/p{h_page}.ttf")
+    ap.add_argument("--font_size", type=int, default=100)
+    ap.add_argument("--title", default="", help="Sura title (e.g. 059 surah).")
+    ap.add_argument("--title_font", default="quran.com-frontend-next/public/fonts/quran/surah-names/v1/sura_names.ttf")
+    ap.add_argument("--title_font_size", type=int, default=100)
+    ap.add_argument("--size_x", type=int, default=1920)
+    ap.add_argument("--size_y", type=int, default=1080)
+    ap.add_argument("--margin_h", type=int, default=200)
+    ap.add_argument("--margin_v", type=int, default=20)
+    ap.add_argument("--interline", type=int, default=30)
+    ap.add_argument("--stroke_width", type=int, default=5)
+    ap.add_argument("--translation_font", default="font/HM_XNiloofar.ttf")
+    ap.add_argument("--translation_font_size", type=int, default=48)
+    ap.add_argument("--show_page", action="store_true", help="Show page number (top-left).")
+    ap.add_argument("--bg_clip_start", type=float, default=0.0, help="Start time (sec) in background video.")
+    ap.add_argument("--audio_skip", type=float, default=0.0, help="Add this to overlay times to sync with audio.")
+    ap.add_argument("--audio", default="translation", help="Unused; kept for compatibility.")
+    ap.add_argument("--debug", action="store_true", help="First 3 ayahs only; no background (black); 5 s per ayah. No background file needed.")
+    return ap.parse_args()
+
+
+def main() -> None:
+    args = parse_sura_args()
+    run_sura(args)
 
 
 if __name__ == "__main__":

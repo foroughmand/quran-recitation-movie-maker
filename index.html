@@ -1,0 +1,382 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Surah 112 alignment review</title>
+  <style>
+    :root {
+      --bg: #f5f1e8;
+      --panel: rgba(255,255,255,0.78);
+      --ink: #1d1a16;
+      --muted: #6f6557;
+      --accent: #0d7a5f;
+      --accent-soft: #d8f2e7;
+      --ayah: #faf7f2;
+      --active: #ffe7a8;
+      --selected: #a8ddff;
+      --border: rgba(36, 29, 21, 0.12);
+      --shadow: 0 18px 50px rgba(38, 30, 20, 0.08);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Iowan Old Style", "Palatino Linotype", serif;
+      background:
+        radial-gradient(circle at top left, rgba(13,122,95,0.16), transparent 28%),
+        radial-gradient(circle at bottom right, rgba(175,101,39,0.16), transparent 30%),
+        linear-gradient(180deg, #f8f4eb 0%, #f1eadf 100%);
+      color: var(--ink);
+    }
+    .shell {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 24px;
+      display: grid;
+      gap: 18px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+    }
+    .hero {
+      padding: 22px 24px;
+      display: grid;
+      gap: 10px;
+    }
+    h1, h2 {
+      margin: 0;
+      font-weight: 700;
+    }
+    .meta {
+      color: var(--muted);
+      display: flex;
+      gap: 14px;
+      flex-wrap: wrap;
+      font-size: 0.96rem;
+    }
+    .player {
+      padding: 16px 24px 24px;
+      display: grid;
+      gap: 14px;
+    }
+    audio {
+      width: 100%;
+    }
+    .controls, .selected-controls {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    button {
+      border: 0;
+      border-radius: 999px;
+      padding: 10px 14px;
+      background: var(--accent);
+      color: white;
+      cursor: pointer;
+      font: inherit;
+    }
+    button.secondary {
+      background: #e6efe9;
+      color: #14382f;
+    }
+    button:disabled {
+      opacity: 0.55;
+      cursor: default;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(0, 1.75fr) minmax(320px, 0.9fr);
+      gap: 18px;
+    }
+    .text-panel {
+      padding: 20px;
+      display: grid;
+      gap: 16px;
+    }
+    .ayah {
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 16px;
+      background: var(--ayah);
+    }
+    .ayah-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      align-items: baseline;
+      color: var(--muted);
+      margin-bottom: 12px;
+    }
+    .ayah-body {
+      direction: rtl;
+      text-align: right;
+      font-size: 1.8rem;
+      line-height: 2.2;
+    }
+    .word {
+      border-radius: 10px;
+      padding: 0.08em 0.25em;
+      cursor: pointer;
+      transition: background-color 120ms ease, color 120ms ease;
+    }
+    .word:hover {
+      background: rgba(13,122,95,0.12);
+    }
+    .word.active {
+      background: var(--active);
+    }
+    .word.selected {
+      background: var(--selected);
+    }
+    .side-panel {
+      padding: 20px;
+      display: grid;
+      gap: 16px;
+      align-content: start;
+    }
+    .info {
+      color: var(--muted);
+      font-size: 0.94rem;
+    }
+    .timing {
+      font-family: ui-monospace, "SF Mono", monospace;
+      font-size: 0.95rem;
+      color: var(--muted);
+    }
+    .selected-box {
+      border: 1px dashed rgba(13,122,95,0.35);
+      background: var(--accent-soft);
+      border-radius: 18px;
+      padding: 16px;
+      display: grid;
+      gap: 10px;
+    }
+    .selected-word {
+      direction: rtl;
+      text-align: right;
+      font-size: 2rem;
+    }
+    .ayah-list {
+      max-height: 52vh;
+      overflow: auto;
+      display: grid;
+      gap: 10px;
+    }
+    .ayah-row {
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 10px 12px;
+      background: rgba(255,255,255,0.6);
+    }
+    .ayah-row.active {
+      border-color: rgba(13,122,95,0.55);
+      background: rgba(216,242,231,0.85);
+    }
+    @media (max-width: 920px) {
+      .layout { grid-template-columns: 1fr; }
+      .ayah-body { font-size: 1.55rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <section class="card hero">
+      <h1>Surah 112 alignment review</h1>
+      <div class="meta">
+        <span>Surah 112</span>
+        <span>fake</span>
+        <span>Audio: 00:01.880</span>
+      </div>
+    </section>
+
+    <section class="card player">
+      <audio id="audio" controls preload="metadata">
+        <source src="dummy.wav" type="audio/mpeg" />
+      </audio>
+      <div class="controls">
+        <button id="play-all">Play from start</button>
+        <button id="play-selected" disabled>Play selected</button>
+        <button id="play-selected-pre" class="secondary" disabled>Play 1s before</button>
+      </div>
+      <div class="timing" id="playback-status">00:00.000 / 00:01.880</div>
+    </section>
+
+    <div class="layout">
+      <section class="card text-panel">
+        <h2>Full Surah</h2>
+        <div id="surah-root"></div>
+      </section>
+      <aside class="card side-panel">
+        <div class="selected-box">
+          <div class="info">Selected word</div>
+          <div class="selected-word" id="selected-word">Nothing selected yet</div>
+          <div class="timing" id="selected-time">Click any word to audition its alignment.</div>
+          <div class="selected-controls">
+            <button id="jump-selected" class="secondary" disabled>Jump to word</button>
+          </div>
+        </div>
+        <div>
+          <h2>Ayah timings</h2>
+          <div class="ayah-list" id="ayah-list"></div>
+        </div>
+      </aside>
+    </div>
+  </div>
+
+  <script id="alignment-data" type="application/json">{"title": "Surah 112 alignment review", "surah_number": 112, "backend": "fake", "audio": {"path": "/Users/mfo19/Downloads/quran-recitation-movie-maker/dummy.wav", "relative_path": "dummy.wav", "duration_ms": 1880, "duration_label": "00:01.880"}, "words": [{"id": 1, "ayah_number": 1, "word_index_in_ayah": 1, "text": "بسم", "normalized": "بسم", "start_ms": 0, "end_ms": 80, "score": 0.95}, {"id": 2, "ayah_number": 1, "word_index_in_ayah": 2, "text": "الله", "normalized": "الله", "start_ms": 100, "end_ms": 180, "score": 0.95}, {"id": 3, "ayah_number": 1, "word_index_in_ayah": 3, "text": "الرحمن", "normalized": "الرحمن", "start_ms": 200, "end_ms": 280, "score": 0.95}, {"id": 4, "ayah_number": 1, "word_index_in_ayah": 4, "text": "الرحيم", "normalized": "الرحيم", "start_ms": 300, "end_ms": 380, "score": 0.95}, {"id": 5, "ayah_number": 1, "word_index_in_ayah": 5, "text": "قل", "normalized": "قل", "start_ms": 400, "end_ms": 480, "score": 0.95}, {"id": 6, "ayah_number": 1, "word_index_in_ayah": 6, "text": "هو", "normalized": "هو", "start_ms": 500, "end_ms": 580, "score": 0.95}, {"id": 7, "ayah_number": 1, "word_index_in_ayah": 7, "text": "الله", "normalized": "الله", "start_ms": 600, "end_ms": 680, "score": 0.95}, {"id": 8, "ayah_number": 1, "word_index_in_ayah": 8, "text": "احد", "normalized": "احد", "start_ms": 700, "end_ms": 780, "score": 0.95}, {"id": 9, "ayah_number": 2, "word_index_in_ayah": 1, "text": "الله", "normalized": "الله", "start_ms": 800, "end_ms": 880, "score": 0.95}, {"id": 10, "ayah_number": 2, "word_index_in_ayah": 2, "text": "الصمد", "normalized": "الصمد", "start_ms": 900, "end_ms": 980, "score": 0.95}, {"id": 11, "ayah_number": 3, "word_index_in_ayah": 1, "text": "لم", "normalized": "لم", "start_ms": 1000, "end_ms": 1080, "score": 0.95}, {"id": 12, "ayah_number": 3, "word_index_in_ayah": 2, "text": "يلد", "normalized": "يلد", "start_ms": 1100, "end_ms": 1180, "score": 0.95}, {"id": 13, "ayah_number": 3, "word_index_in_ayah": 3, "text": "ولم", "normalized": "ولم", "start_ms": 1200, "end_ms": 1280, "score": 0.95}, {"id": 14, "ayah_number": 3, "word_index_in_ayah": 4, "text": "يولد", "normalized": "يولد", "start_ms": 1300, "end_ms": 1380, "score": 0.95}, {"id": 15, "ayah_number": 4, "word_index_in_ayah": 1, "text": "ولم", "normalized": "ولم", "start_ms": 1400, "end_ms": 1480, "score": 0.95}, {"id": 16, "ayah_number": 4, "word_index_in_ayah": 2, "text": "يكن", "normalized": "يكن", "start_ms": 1500, "end_ms": 1580, "score": 0.95}, {"id": 17, "ayah_number": 4, "word_index_in_ayah": 3, "text": "له", "normalized": "له", "start_ms": 1600, "end_ms": 1680, "score": 0.95}, {"id": 18, "ayah_number": 4, "word_index_in_ayah": 4, "text": "كفوا", "normalized": "كفوا", "start_ms": 1700, "end_ms": 1780, "score": 0.95}, {"id": 19, "ayah_number": 4, "word_index_in_ayah": 5, "text": "احد", "normalized": "احد", "start_ms": 1800, "end_ms": 1880, "score": 0.95}], "ayahs": [{"ayah_number": 1, "text": "بِسْمِ اللَّهِ الرَّحْمَٰنِ الرَّحِيمِ قُلْ هُوَ اللَّهُ أَحَدٌ", "start_ms": 0, "end_ms": 780, "words": [{"id": 1, "ayah_number": 1, "word_index_in_ayah": 1, "text": "بسم", "normalized": "بسم", "start_ms": 0, "end_ms": 80, "score": 0.95}, {"id": 2, "ayah_number": 1, "word_index_in_ayah": 2, "text": "الله", "normalized": "الله", "start_ms": 100, "end_ms": 180, "score": 0.95}, {"id": 3, "ayah_number": 1, "word_index_in_ayah": 3, "text": "الرحمن", "normalized": "الرحمن", "start_ms": 200, "end_ms": 280, "score": 0.95}, {"id": 4, "ayah_number": 1, "word_index_in_ayah": 4, "text": "الرحيم", "normalized": "الرحيم", "start_ms": 300, "end_ms": 380, "score": 0.95}, {"id": 5, "ayah_number": 1, "word_index_in_ayah": 5, "text": "قل", "normalized": "قل", "start_ms": 400, "end_ms": 480, "score": 0.95}, {"id": 6, "ayah_number": 1, "word_index_in_ayah": 6, "text": "هو", "normalized": "هو", "start_ms": 500, "end_ms": 580, "score": 0.95}, {"id": 7, "ayah_number": 1, "word_index_in_ayah": 7, "text": "الله", "normalized": "الله", "start_ms": 600, "end_ms": 680, "score": 0.95}, {"id": 8, "ayah_number": 1, "word_index_in_ayah": 8, "text": "احد", "normalized": "احد", "start_ms": 700, "end_ms": 780, "score": 0.95}]}, {"ayah_number": 2, "text": "اللَّهُ الصَّمَدُ", "start_ms": 800, "end_ms": 980, "words": [{"id": 9, "ayah_number": 2, "word_index_in_ayah": 1, "text": "الله", "normalized": "الله", "start_ms": 800, "end_ms": 880, "score": 0.95}, {"id": 10, "ayah_number": 2, "word_index_in_ayah": 2, "text": "الصمد", "normalized": "الصمد", "start_ms": 900, "end_ms": 980, "score": 0.95}]}, {"ayah_number": 3, "text": "لَمْ يَلِدْ وَلَمْ يُولَدْ", "start_ms": 1000, "end_ms": 1380, "words": [{"id": 11, "ayah_number": 3, "word_index_in_ayah": 1, "text": "لم", "normalized": "لم", "start_ms": 1000, "end_ms": 1080, "score": 0.95}, {"id": 12, "ayah_number": 3, "word_index_in_ayah": 2, "text": "يلد", "normalized": "يلد", "start_ms": 1100, "end_ms": 1180, "score": 0.95}, {"id": 13, "ayah_number": 3, "word_index_in_ayah": 3, "text": "ولم", "normalized": "ولم", "start_ms": 1200, "end_ms": 1280, "score": 0.95}, {"id": 14, "ayah_number": 3, "word_index_in_ayah": 4, "text": "يولد", "normalized": "يولد", "start_ms": 1300, "end_ms": 1380, "score": 0.95}]}, {"ayah_number": 4, "text": "وَلَمْ يَكُنْ لَهُ كُفُوًا أَحَدٌ", "start_ms": 1400, "end_ms": 1880, "words": [{"id": 15, "ayah_number": 4, "word_index_in_ayah": 1, "text": "ولم", "normalized": "ولم", "start_ms": 1400, "end_ms": 1480, "score": 0.95}, {"id": 16, "ayah_number": 4, "word_index_in_ayah": 2, "text": "يكن", "normalized": "يكن", "start_ms": 1500, "end_ms": 1580, "score": 0.95}, {"id": 17, "ayah_number": 4, "word_index_in_ayah": 3, "text": "له", "normalized": "له", "start_ms": 1600, "end_ms": 1680, "score": 0.95}, {"id": 18, "ayah_number": 4, "word_index_in_ayah": 4, "text": "كفوا", "normalized": "كفوا", "start_ms": 1700, "end_ms": 1780, "score": 0.95}, {"id": 19, "ayah_number": 4, "word_index_in_ayah": 5, "text": "احد", "normalized": "احد", "start_ms": 1800, "end_ms": 1880, "score": 0.95}]}], "quality": {"coverage": 1.0, "zero_length_ratio": 0.0, "warnings": []}}</script>
+  <script>
+    const data = JSON.parse(document.getElementById('alignment-data').textContent);
+    const audio = document.getElementById('audio');
+    const surahRoot = document.getElementById('surah-root');
+    const ayahList = document.getElementById('ayah-list');
+    const selectedWordEl = document.getElementById('selected-word');
+    const selectedTimeEl = document.getElementById('selected-time');
+    const playbackStatusEl = document.getElementById('playback-status');
+    const playAllBtn = document.getElementById('play-all');
+    const playSelectedBtn = document.getElementById('play-selected');
+    const playSelectedPreBtn = document.getElementById('play-selected-pre');
+    const jumpSelectedBtn = document.getElementById('jump-selected');
+
+    let selectedWordId = null;
+    let activeWordId = null;
+    const wordMap = new Map();
+
+    function formatMs(ms) {
+      const totalSeconds = Math.floor(ms / 1000);
+      const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, '0');
+      const seconds = String(totalSeconds % 60).padStart(2, '0');
+      const millis = String(ms % 1000).padStart(3, '0');
+      return `${minutes}:${seconds}.${millis}`;
+    }
+
+    function findActiveWord(timeMs) {
+      return data.words.find((word) => timeMs >= word.start_ms && timeMs < word.end_ms) || null;
+    }
+
+    function findActiveAyah(timeMs) {
+      return data.ayahs.find((ayah) => timeMs >= ayah.start_ms && timeMs < ayah.end_ms) || null;
+    }
+
+    function render() {
+      data.ayahs.forEach((ayah) => {
+        const ayahEl = document.createElement('article');
+        ayahEl.className = 'ayah';
+
+        const head = document.createElement('div');
+        head.className = 'ayah-head';
+        head.innerHTML = `<strong>Ayah ${ayah.ayah_number}</strong><span>${formatMs(ayah.start_ms)} - ${formatMs(ayah.end_ms)}</span>`;
+
+        const body = document.createElement('div');
+        body.className = 'ayah-body';
+        ayah.words.forEach((word) => {
+          const span = document.createElement('span');
+          span.className = 'word';
+          span.dataset.wordId = String(word.id);
+          span.textContent = word.text;
+          span.addEventListener('click', () => selectWord(word.id, true));
+          body.appendChild(span);
+          body.appendChild(document.createTextNode(' '));
+          wordMap.set(word.id, span);
+        });
+
+        ayahEl.appendChild(head);
+        ayahEl.appendChild(body);
+        surahRoot.appendChild(ayahEl);
+
+        const row = document.createElement('div');
+        row.className = 'ayah-row';
+        row.id = `ayah-row-${ayah.ayah_number}`;
+        row.innerHTML = `<strong>${ayah.ayah_number}</strong><div class="timing">${formatMs(ayah.start_ms)} - ${formatMs(ayah.end_ms)}</div>`;
+        row.addEventListener('click', () => {
+          audio.currentTime = ayah.start_ms / 1000;
+          audio.play();
+        });
+        ayahList.appendChild(row);
+      });
+    }
+
+    function setSelectedButtons(enabled) {
+      playSelectedBtn.disabled = !enabled;
+      playSelectedPreBtn.disabled = !enabled;
+      jumpSelectedBtn.disabled = !enabled;
+    }
+
+    function selectWord(wordId, scroll) {
+      if (selectedWordId !== null) {
+        wordMap.get(selectedWordId)?.classList.remove('selected');
+      }
+      selectedWordId = wordId;
+      const word = data.words.find((item) => item.id === wordId);
+      const el = wordMap.get(wordId);
+      el?.classList.add('selected');
+      selectedWordEl.textContent = word.text;
+      selectedTimeEl.textContent = `${formatMs(word.start_ms)} - ${formatMs(word.end_ms)} | Ayah ${word.ayah_number}`;
+      setSelectedButtons(true);
+      if (scroll) {
+        el?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+      }
+    }
+
+    function updateActiveWord(timeMs) {
+      const activeWord = findActiveWord(timeMs);
+      if (activeWordId !== null && activeWordId !== activeWord?.id) {
+        wordMap.get(activeWordId)?.classList.remove('active');
+      }
+      if (activeWord && activeWord.id !== activeWordId) {
+        wordMap.get(activeWord.id)?.classList.add('active');
+        activeWordId = activeWord.id;
+      } else if (!activeWord) {
+        activeWordId = null;
+      }
+
+      const activeAyah = findActiveAyah(timeMs);
+      document.querySelectorAll('.ayah-row.active').forEach((node) => node.classList.remove('active'));
+      if (activeAyah) {
+        document.getElementById(`ayah-row-${activeAyah.ayah_number}`)?.classList.add('active');
+      }
+    }
+
+    playAllBtn.addEventListener('click', () => {
+      audio.currentTime = 0;
+      audio.play();
+    });
+
+    playSelectedBtn.addEventListener('click', () => {
+      const word = data.words.find((item) => item.id === selectedWordId);
+      if (!word) return;
+      audio.currentTime = word.start_ms / 1000;
+      audio.play();
+    });
+
+    playSelectedPreBtn.addEventListener('click', () => {
+      const word = data.words.find((item) => item.id === selectedWordId);
+      if (!word) return;
+      audio.currentTime = Math.max(0, (word.start_ms - 1000) / 1000);
+      audio.play();
+    });
+
+    jumpSelectedBtn.addEventListener('click', () => {
+      const word = data.words.find((item) => item.id === selectedWordId);
+      if (!word) return;
+      audio.currentTime = word.start_ms / 1000;
+    });
+
+    audio.addEventListener('timeupdate', () => {
+      const timeMs = Math.floor(audio.currentTime * 1000);
+      playbackStatusEl.textContent = `${formatMs(timeMs)} / ${data.audio.duration_label}`;
+      updateActiveWord(timeMs);
+    });
+
+    render();
+    if (data.words.length) {
+      selectWord(data.words[0].id, false);
+    }
+  </script>
+</body>
+</html>

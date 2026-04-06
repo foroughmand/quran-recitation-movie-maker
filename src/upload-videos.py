@@ -16,40 +16,34 @@ def to_hindi_numerals(number):
     hindi_digits = "٠١٢٣٤٥٦٧٨٩"
     return "".join(hindi_digits[int(d)] if d.isdigit() else d for d in str(number))
 
-import requests
+REPO_ROOT = os.path.abspath(os.path.dirname(__file__) + "/..")
 
-def fetch_surah_data():
-    """Fetch Surah metadata from Quran.com API (v4)."""
-    url = "https://api.quran.com/api/v4/chapters"
-    headers = {
-        "Accept": "application/json"
-    }
 
-    response = requests.get(url, headers=headers)
-    response.raise_for_status()
+def load_sura_names_fa():
+    """Load Persian sura names from data/sura_names_fa.txt (index -> name)."""
+    path = os.path.join(REPO_ROOT, "data", "sura_names_fa.txt")
+    names = {}
+    if os.path.isfile(path):
+        with open(path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                parts = line.split(None, 1)
+                if len(parts) >= 2:
+                    names[int(parts[0])] = parts[1]
+    return names
 
-    chapters = response.json().get("chapters", [])
-    return {
-        chapter["id"]: {
-            "name": chapter["name_arabic"],
-            "latin": chapter["name_simple"],
-            "english": chapter["translated_name"]["name"]
-        }
-        for chapter in chapters
-    }
-
-sura_data = fetch_surah_data()
 
 def get_video_config(file_path: str, sura_index: int, reciter: str = "ادریس ابکر") -> dict:
-    """Build video metadata based on surah index and reciter."""
-    sura = sura_data.get(sura_index)
-    if not sura:
-        raise ValueError(f"Surah index {sura_index} not found in Quran.com API.")
-
-    sura_name = sura["name"]
-    title = f"تلاوت سوره {sura_name} - {reciter}"
+    """Build video metadata based on surah index and reciter (Persian sura name)."""
+    names_fa = load_sura_names_fa()
+    sura_name_fa = names_fa.get(sura_index)
+    if not sura_name_fa:
+        sura_name_fa = str(sura_index)
+    title = f"تلاوت سوره {sura_name_fa} - {reciter}"
     description = (
-        f"تلاوت سوره {sura_name} ({to_hindi_numerals(sura_index)}) - ترتیل\n"
+        f"تلاوت سوره {sura_name_fa} ({to_hindi_numerals(sura_index)}) - ترتیل\n"
         f"قاری: {reciter}\n"
         f"با تصویر پس‌زمینه طبیعت"
     )
@@ -61,7 +55,7 @@ def get_video_config(file_path: str, sura_index: int, reciter: str = "ادریس
         "made_for_kids": False,
         "category": "10",  # Music
         "visibility": "public",
-        "tags": ["تلاوت قرآن", f"سوره {sura_name}", reciter],
+        "tags": ["تلاوت قرآن", f"سوره {sura_name_fa}", reciter],
         "playlist": ["تلاوت قرآن"]
     }
 

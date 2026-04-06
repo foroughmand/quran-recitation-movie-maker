@@ -190,6 +190,7 @@ def main():
     elif playlist_val:
         upload_kw["new_playlist"] = playlist_val
         upload_kw["playlist_temp"] = playlist_val
+        upload_kw["playlistid"] = ""  # so we don't add to a numeric playlist
     ap.upload(**upload_kw)
     print("\nUpload finished.")
 

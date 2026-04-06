@@ -977,6 +977,11 @@ def run_alignment(
     _emit_progress(progress_callback, "write", "Writing alignment text")
     write_alignment_txt(resolved_output, best_run.ayah_alignments)
 
+    # Stage audio before heavy debug JSON / review so movie scripts still find audio.mp3
+    # if a later step fails or is killed.
+    _emit_progress(progress_callback, "write", "Staging audio in output dir")
+    review_audio_file = _stage_audio_for_review(audio_file, resolved_output_dir)
+
     resolved_debug = Path(debug_path).resolve() if debug_path else resolved_output_dir / "alignment.debug.json"
     _emit_progress(progress_callback, "write", "Writing debug JSON")
     debug_started_at = time.monotonic()
@@ -1008,7 +1013,6 @@ def run_alignment(
         )
     resolved_review = Path(review_path).resolve() if review_path else resolved_output_dir / "index.html"
     _emit_progress(progress_callback, "write", "Writing review HTML")
-    review_audio_file = _stage_audio_for_review(audio_file, resolved_output_dir)
     review_payload = _build_review_payload(
         best_run,
         review_audio_file,

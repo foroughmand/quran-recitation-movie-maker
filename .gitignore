@@ -12,3 +12,4 @@ cookies.txt
 **/__pycache__
 src/to-be-removed/
 .DS_Store
+quran_aligner/native/libdp_kernel.dylib

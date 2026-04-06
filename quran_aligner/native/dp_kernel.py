@@ -23,11 +23,11 @@ def build_native_library() -> Path:
     target = native_library_path()
     system = platform.system()
     if system == "Darwin":
-        cmd = ["clang++", "-O3", "-std=c++17", "-dynamiclib", "-o", str(target), str(source)]
+        cmd = ["g++", "-O3", "-std=c++17", "-dynamiclib", "-o", str(target), str(source)]
     elif system == "Windows":
         raise RuntimeError("Windows build is not implemented for dp_kernel yet.")
     else:
-        cmd = ["clang++", "-O3", "-std=c++17", "-shared", "-fPIC", "-o", str(target), str(source)]
+        cmd = ["g++", "-O3", "-std=c++17", "-shared", "-fPIC", "-o", str(target), str(source)]
     subprocess.run(cmd, check=True)
     return target
 

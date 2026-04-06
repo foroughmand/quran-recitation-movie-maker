@@ -1,3 +1,8 @@
+#!/usr/bin/env python3
+"""Upload a video to YouTube. Always run as: python3 src/upload-videos.py ...
+If you run this file with zsh or bash (e.g. `zsh src/upload-videos.py`), the shell will
+execute `import` / `from` as shell commands (ImageMagick `import` needs an X display).
+"""
 import argparse
 import os
 import sys

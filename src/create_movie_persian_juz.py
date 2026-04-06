@@ -333,7 +333,11 @@ def create_full_text_image_persian(
         min_top = max(min_top, margin_v + draw.textbbox((0, 0), short_text_center, font=center_font)[3])
 
     if short_text_right and short_font_path:
-        right_font = ImageFont.truetype(short_font_path, short_font_size)
+        try:
+            right_font = ImageFont.truetype(short_font_path, short_font_size)
+        except Exception as e:
+            print('Error: ', e, short_font_path)
+            raise e
         draw.text(
             (size[0] - margin_h, margin_v),
             short_text_right,

@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from functools import lru_cache
 import ctypes
 import time
+from typing import Any
+
+import numpy as np
 
 from .models import AlignmentRunSegment, FrameAlignment, TokenRef
 from .native.dp_kernel import load_native_library
@@ -82,10 +85,12 @@ class DecoderResult:
 
 @dataclass(slots=True)
 class StateDecodeResult:
+    """dp_scores/backpointers: python engine uses nested lists; native uses ndarray / (ps, pb) tuple."""
+
     bucket_to_state: list[int]
     total_score: float
-    dp_scores: list[list[float]]
-    backpointers: list[list[tuple[int | None, int] | None]]
+    dp_scores: Any
+    backpointers: Any
 
 
 def _backtrack_state_path(
@@ -124,6 +129,101 @@ def _backtrack_state_path(
     if any(state < 0 for state in bucket_to_state):
         raise RuntimeError("State DP produced an incomplete bucket path.")
     return bucket_to_state
+
+
+def _backtrack_state_path_numpy(
+    prev_state: np.ndarray,
+    prev_bucket: np.ndarray,
+    state_count: int,
+    bucket_count: int,
+    *,
+    progress_callback=None,
+) -> list[int]:
+    bucket_to_state = [-1] * bucket_count
+    state_index: int | None = state_count - 1
+    bucket = bucket_count
+    covered = 0
+    while state_index is not None:
+        prev_sv = int(prev_state[state_index, bucket])
+        prev_bv = int(prev_bucket[state_index, bucket])
+        if prev_sv == -2:
+            pointer = None
+        elif prev_sv == -1:
+            pointer = (None, prev_bv)
+        else:
+            pointer = (prev_sv, prev_bv)
+        if pointer is None:
+            raise RuntimeError("State DP path is missing a backpointer.")
+        previous_state, previous_bucket = pointer
+        for bucket_index in range(previous_bucket, bucket):
+            bucket_to_state[bucket_index] = state_index
+        covered += bucket - previous_bucket
+        if progress_callback is not None:
+            progress_callback(
+                ProgressEvent(
+                    stage="backtrack",
+                    message=f"Backtracking final DP path ({covered}/{bucket_count} buckets)",
+                    completed=covered,
+                    total=bucket_count,
+                )
+            )
+        state_index = previous_state
+        bucket = previous_bucket
+        if state_index is None and bucket != 0:
+            raise RuntimeError("State DP terminated before covering bucket 0.")
+
+    if any(state < 0 for state in bucket_to_state):
+        raise RuntimeError("State DP produced an incomplete bucket path.")
+    return bucket_to_state
+
+
+def state_dp_phrase_trace_payload(decoded: StateDecodeResult, units) -> list[dict[str, object]]:
+    """Same entries as the CTC backend ``phrase_trace`` list (for review / debug)."""
+    back = decoded.backpointers
+    bts = decoded.bucket_to_state
+    bucket_count = len(bts)
+    state_count = len(units)
+    traces: list[dict[str, object]] = []
+    if isinstance(back, tuple):
+        ps, pb = back
+        for state_index in range(min(state_count, ps.shape[0])):
+            for bucket_index in range(bucket_count):
+                col = bucket_index + 1
+                prev_sv = int(ps[state_index, col])
+                prev_bv = int(pb[state_index, col])
+                if prev_sv == -2:
+                    pointer = None
+                elif prev_sv == -1:
+                    pointer = (None, prev_bv)
+                else:
+                    pointer = (prev_sv, prev_bv)
+                if pointer is None or bts[bucket_index] != state_index:
+                    continue
+                traces.append(
+                    {
+                        "previous_state_index": pointer[0],
+                        "start_word_index": units[state_index].global_word_index,
+                        "end_word_index": units[state_index].global_word_index,
+                        "start_bucket": pointer[1] if pointer is not None else 0,
+                        "end_bucket": bucket_index + 1,
+                        "repair_width": 1 if pointer is None or pointer[0] is None else abs(state_index - pointer[0]) + 1,
+                    }
+                )
+    else:
+        for state_index, row in enumerate(back):
+            for bucket_index, pointer in enumerate(row[1:], start=0):
+                if pointer is not None and bts[bucket_index] == state_index:
+                    traces.append(
+                        {
+                            "previous_state_index": pointer[0],
+                            "start_word_index": units[state_index].global_word_index,
+                            "end_word_index": units[state_index].global_word_index,
+                            "start_bucket": pointer[1] if pointer is not None else 0,
+                            "end_bucket": bucket_index + 1,
+                            "repair_width": 1 if pointer is None or pointer[0] is None else abs(state_index - pointer[0]) + 1,
+                        }
+                    )
+    return traces
 
 
 def build_scoring_matrix(
@@ -363,7 +463,7 @@ def decode_with_segmental_dp(
 
 def decode_state_score_matrix(
     state_count: int,
-    scoring_matrix: list[list[float]],
+    scoring_matrix: list[list[float]] | np.ndarray,
     config: DecoderConfig,
     *,
     is_word_end_state: list[bool] | None = None,
@@ -388,9 +488,14 @@ def decode_state_score_matrix(
     Backtracking can also be penalized numerically. A true backward jump `j > i`
     subtracts `config.backtrack_penalty(j - i)` from its candidate score.
     """
-    bucket_count = len(scoring_matrix[0]) if scoring_matrix else 0
+    scoring_arr = np.ascontiguousarray(scoring_matrix, dtype=np.float64)
+    if scoring_arr.ndim != 2:
+        raise ValueError("scoring_matrix must be a 2-D array or list-of-rows.")
+    sm_states, bucket_count = int(scoring_arr.shape[0]), int(scoring_arr.shape[1])
     if state_count <= 0 or bucket_count <= 0:
         return StateDecodeResult(bucket_to_state=[], total_score=0.0, dp_scores=[], backpointers=[])
+    if sm_states != state_count:
+        raise ValueError(f"scoring_matrix row count {sm_states} does not match state_count {state_count}.")
     if is_word_end_state is not None and len(is_word_end_state) != state_count:
         raise ValueError("is_word_end_state must have one entry per decoder state.")
     if is_word_start_state is not None and len(is_word_start_state) != state_count:
@@ -401,7 +506,7 @@ def decode_state_score_matrix(
     if config.state_dp_engine == "native":
         return _decode_state_score_matrix_native(
             state_count,
-            scoring_matrix,
+            scoring_arr,
             config,
             is_word_end_state=is_word_end_state,
             is_word_start_state=is_word_start_state,
@@ -416,14 +521,9 @@ def decode_state_score_matrix(
 
     fill_started_at = time.monotonic()
 
-    prefix_sums: list[list[float]] = []
-    for row in scoring_matrix:
-        prefix = [0.0]
-        running = 0.0
-        for value in row:
-            running += value
-            prefix.append(running)
-        prefix_sums.append(prefix)
+    prefix_sums = np.empty((state_count, bucket_count + 1), dtype=np.float64)
+    prefix_sums[:, 0] = 0.0
+    prefix_sums[:, 1:] = np.cumsum(scoring_arr, axis=1)
 
     if config.state_dp_mode == "jump":
         dp = [[NEG_INF] * (bucket_count + 1) for _ in range(state_count)]
@@ -478,7 +578,7 @@ def decode_state_score_matrix(
                         suffix_source_states[state_index] = running_source_state
 
                 for state_index in range(state_count):
-                    local_scores[state_index] = prefix_sums[state_index][b] - prefix_sums[state_index][a]
+                    local_scores[state_index] = float(prefix_sums[state_index, b] - prefix_sums[state_index, a])
 
                 for state_index in range(state_count):
                     local_score = local_scores[state_index]
@@ -555,7 +655,7 @@ def decode_state_score_matrix(
                     )
                 )
             bucket_index = b - 1
-            local_scores = [scoring_matrix[state_index][bucket_index] for state_index in range(state_count)]
+            local_scores = scoring_arr[:, bucket_index]
             if constant_backtrack_penalty:
                 running_source_score = NEG_INF
                 running_source_state = -1
@@ -664,7 +764,7 @@ def decode_state_score_matrix(
 
 def _decode_state_score_matrix_native(
     state_count: int,
-    scoring_matrix: list[list[float]],
+    scoring_arr: np.ndarray,
     config: DecoderConfig,
     *,
     is_word_end_state: list[bool] | None,
@@ -673,13 +773,23 @@ def _decode_state_score_matrix_native(
     progress_callback=None,
 ) -> StateDecodeResult:
     fill_started_at = time.monotonic()
-    bucket_count = len(scoring_matrix[0]) if scoring_matrix else 0
+    if scoring_arr.ndim != 2:
+        raise ValueError("native decode expects a 2-D scoring matrix")
+    bucket_count = int(scoring_arr.shape[1])
     if state_count <= 0 or bucket_count <= 0:
         return StateDecodeResult(bucket_to_state=[], total_score=0.0, dp_scores=[], backpointers=[])
 
     library = load_native_library()
-    flat_scores = [value for row in scoring_matrix for value in row]
-    score_buffer = (ctypes.c_double * len(flat_scores))(*flat_scores)
+    n_scores = state_count * bucket_count
+    flat = np.ascontiguousarray(scoring_arr, dtype=np.float64).ravel(order="C")
+    if flat.size != n_scores:
+        raise ValueError("scoring matrix size does not match state_count * bucket_count")
+    score_buffer = (ctypes.c_double * n_scores)()
+    ctypes.memmove(
+        ctypes.addressof(score_buffer),
+        flat.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+        n_scores * ctypes.sizeof(ctypes.c_double),
+    )
     end_mask_values = [1 if flag else 0 for flag in (is_word_end_state or [False] * state_count)]
     start_mask_values = [1 if flag else 0 for flag in (is_word_start_state or [False] * state_count)]
     end_mask = (ctypes.c_uint8 * len(end_mask_values))(*end_mask_values)
@@ -687,7 +797,14 @@ def _decode_state_score_matrix_native(
     silence_buffer = None
     silence_ptr = None
     if bucket_silence_scores is not None:
-        silence_buffer = (ctypes.c_double * len(bucket_silence_scores))(*bucket_silence_scores)
+        nb = len(bucket_silence_scores)
+        silence_buffer = (ctypes.c_double * nb)()
+        sil_flat = np.asarray(bucket_silence_scores, dtype=np.float64).ravel()
+        ctypes.memmove(
+            ctypes.addressof(silence_buffer),
+            sil_flat.ctypes.data_as(ctypes.POINTER(ctypes.c_double)),
+            nb * ctypes.sizeof(ctypes.c_double),
+        )
         silence_ptr = silence_buffer
 
     total_cells = state_count * (bucket_count + 1)
@@ -732,26 +849,22 @@ def _decode_state_score_matrix_native(
     if status != 0:
         raise RuntimeError(f"Native DP kernel failed with status {status}.")
 
-    dp = [
-        [float(dp_buffer[state_index * (bucket_count + 1) + bucket]) for bucket in range(bucket_count + 1)]
-        for state_index in range(state_count)
-    ]
-    back: list[list[tuple[int | None, int] | None]] = []
-    for state_index in range(state_count):
-        row: list[tuple[int | None, int] | None] = []
-        for bucket in range(bucket_count + 1):
-            flat_index = state_index * (bucket_count + 1) + bucket
-            prev_state = int(prev_state_buffer[flat_index])
-            prev_bucket = int(prev_bucket_buffer[flat_index])
-            if prev_state == -2:
-                row.append(None)
-            elif prev_state == -1:
-                row.append((None, prev_bucket))
-            else:
-                row.append((prev_state, prev_bucket))
-        back.append(row)
+    if progress_callback is not None:
+        progress_callback(
+            ProgressEvent(
+                stage="align",
+                message=(
+                    "Native DP fill done; packing dp/back as NumPy arrays "
+                    f"({state_count}×{bucket_count + 1} cells)"
+                ),
+            )
+        )
 
-    if dp[state_count - 1][bucket_count] <= NEG_INF / 2:
+    dp_arr = np.ctypeslib.as_array(dp_buffer).reshape(state_count, bucket_count + 1).copy()
+    prev_s_arr = np.ctypeslib.as_array(prev_state_buffer).reshape(state_count, bucket_count + 1).copy()
+    prev_b_arr = np.ctypeslib.as_array(prev_bucket_buffer).reshape(state_count, bucket_count + 1).copy()
+
+    if float(dp_arr[state_count - 1, bucket_count]) <= NEG_INF / 2:
         raise RuntimeError("State DP failed to produce a full alignment path.")
 
     fill_elapsed = time.monotonic() - fill_started_at
@@ -764,8 +877,9 @@ def _decode_state_score_matrix_native(
         )
 
     backtrack_started_at = time.monotonic()
-    bucket_to_state = _backtrack_state_path(
-        back,
+    bucket_to_state = _backtrack_state_path_numpy(
+        prev_s_arr,
+        prev_b_arr,
         state_count,
         bucket_count,
         progress_callback=progress_callback,
@@ -781,15 +895,21 @@ def _decode_state_score_matrix_native(
 
     return StateDecodeResult(
         bucket_to_state=bucket_to_state,
-        total_score=dp[state_count - 1][bucket_count],
-        dp_scores=dp,
-        backpointers=back,
+        total_score=float(dp_arr[state_count - 1, bucket_count]),
+        dp_scores=dp_arr,
+        backpointers=(prev_s_arr, prev_b_arr),
     )
+
+
+def score_matrix_at(scoring_matrix: list[list[float]] | np.ndarray, row: int, col: int) -> float:
+    if isinstance(scoring_matrix, np.ndarray):
+        return float(scoring_matrix[row, col])
+    return float(scoring_matrix[row][col])
 
 
 def _frames_from_bucket_path(
     bucket_to_word: list[int],
-    scoring_matrix: list[list[float]],
+    scoring_matrix: list[list[float]] | np.ndarray,
     total_audio_ms: int,
     bucket_ms: int,
 ) -> list[FrameAlignment]:
@@ -804,7 +924,7 @@ def _frames_from_bucket_path(
                 end_ms=end_ms,
                 global_unit_index=None,
                 global_word_index=word_index,
-                score=scoring_matrix[word_index][bucket_index],
+                score=score_matrix_at(scoring_matrix, word_index, bucket_index),
             )
         )
     return frames
@@ -812,7 +932,7 @@ def _frames_from_bucket_path(
 
 def _runs_from_bucket_path(
     bucket_to_word: list[int],
-    scoring_matrix: list[list[float]],
+    scoring_matrix: list[list[float]] | np.ndarray,
     total_audio_ms: int,
     bucket_ms: int,
     tokens: list[TokenRef],
@@ -830,7 +950,9 @@ def _runs_from_bucket_path(
         run_end = bucket_index
         word = tokens[current_word].normalized_word if 0 <= current_word < len(tokens) else ""
         frame_count = run_end - run_start
-        run_score = sum(scoring_matrix[current_word][idx] for idx in range(run_start, run_end)) / max(1, frame_count)
+        run_score = sum(score_matrix_at(scoring_matrix, current_word, idx) for idx in range(run_start, run_end)) / max(
+            1, frame_count
+        )
         runs.append(
             AlignmentRunSegment(
                 run_index=len(runs),

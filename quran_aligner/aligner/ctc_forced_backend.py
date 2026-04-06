@@ -7,7 +7,15 @@ from pathlib import Path
 import sys
 import time
 
-from ..dp_decoder import DecoderConfig, StateDecodeResult, decode_state_score_matrix
+import numpy as np
+
+from ..dp_decoder import (
+    DecoderConfig,
+    StateDecodeResult,
+    decode_state_score_matrix,
+    score_matrix_at,
+    state_dp_phrase_trace_payload,
+)
 from ..models import AlignmentResult, AlignmentRunSegment, FrameAlignment, TokenRef, WordAlignment
 from ..normalizer import (
     DEFAULT_CTC_ALIGNMENT_MODEL,
@@ -181,6 +189,7 @@ class CTCForcedAlignerBackend:
             preprocess_text=preprocess_text,
             start_ms_offset=0,
             progress_callback=progress_callback,
+            collect_decoder_debug=False,
         )
         if progress_callback is not None:
             progress_callback(
@@ -430,6 +439,99 @@ class CTCForcedAlignerBackend:
                     ),
                 )
             )
+        n_bucket = int(scoring_matrix.shape[1]) if isinstance(scoring_matrix, np.ndarray) else len(scoring_matrix[0])
+        phrase_trace = state_dp_phrase_trace_payload(decoded, units) if collect_decoder_debug else []
+        if collect_decoder_debug:
+            dp_thr = -10.0**18 / 2
+            if isinstance(decoded.dp_scores, np.ndarray):
+                dps = [
+                    [None if float(v) <= dp_thr else round(float(v), 4) for v in row] for row in decoded.dp_scores
+                ]
+            else:
+                dps = [
+                    [None if value <= dp_thr else round(value, 4) for value in row] for row in decoded.dp_scores
+                ]
+            if isinstance(decoded.backpointers, tuple):
+                ps, pb = decoded.backpointers
+                bck = []
+                for s in range(ps.shape[0]):
+                    row = []
+                    for col in range(ps.shape[1]):
+                        prev_sv = int(ps[s, col])
+                        prev_bv = int(pb[s, col])
+                        if prev_sv == -2:
+                            row.append(None)
+                        else:
+                            row.append(
+                                {
+                                    "prev_state_index": None if prev_sv == -1 else prev_sv,
+                                    "prev_bucket": prev_bv,
+                                }
+                            )
+                    bck.append(row)
+            else:
+                bck = [
+                    [
+                        None if pointer is None else {"prev_state_index": pointer[0], "prev_bucket": pointer[1]}
+                        for pointer in row
+                    ]
+                    for row in decoded.backpointers
+                ]
+            sm_rounded = (
+                [[round(float(v), 4) for v in row] for row in scoring_matrix]
+                if isinstance(scoring_matrix, np.ndarray)
+                else [[round(value, 4) for value in row] for row in scoring_matrix]
+            )
+            decoder_debug: dict[str, object] = {
+                "bucket_count": n_bucket,
+                "word_count": len(tokens),
+                "state_count": len(units),
+                "bucket_ms": self.decoder_config.bucket_ms,
+                "state_dp_engine": self.decoder_config.state_dp_engine,
+                "state_dp_mode": self.decoder_config.state_dp_mode,
+                "bucket_silence_scores": [round(float(value), 4) for value in bucket_silence_scores],
+                "state_rows": [
+                    {
+                        "state_index": unit.global_unit_index,
+                        "global_word_index": unit.global_word_index,
+                        "ayah_number": unit.ayah_number,
+                        "char": unit.text,
+                        "grapheme": unit.text,
+                        "unit_kind": unit.kind,
+                        "word": tokens[unit.global_word_index].original_word,
+                        "normalized_word": tokens[unit.global_word_index].normalized_word,
+                        "word_index_in_ayah": tokens[unit.global_word_index].word_index_in_ayah,
+                        "label": (
+                            f"{unit.global_unit_index}: {unit.text} "
+                            f"(w{unit.global_word_index + 1} {tokens[unit.global_word_index].original_word})"
+                        ),
+                        "is_word_start": is_word_start_state[unit.global_unit_index],
+                        "is_word_end": is_word_end_state[unit.global_unit_index],
+                    }
+                    for unit in units
+                ],
+                "scoring_matrix": sm_rounded,
+                "dp_scores": dps,
+                "backpointers": bck,
+                "bucket_to_state": list(decoded.bucket_to_state),
+                "bucket_to_word": [
+                    units[state_index].global_word_index for state_index in decoded.bucket_to_state
+                ],
+            }
+        else:
+            decoder_debug = {
+                "bucket_count": n_bucket,
+                "word_count": len(tokens),
+                "state_count": len(units),
+                "bucket_ms": self.decoder_config.bucket_ms,
+                "state_dp_engine": self.decoder_config.state_dp_engine,
+                "state_dp_mode": self.decoder_config.state_dp_mode,
+                "bucket_silence_scores": [round(float(value), 4) for value in bucket_silence_scores],
+                "bucket_to_state": list(decoded.bucket_to_state),
+                "bucket_to_word": [
+                    units[state_index].global_word_index for state_index in decoded.bucket_to_state
+                ],
+            }
         result = AlignmentResult(
             words=alignments,
             total_score=decoded.total_score,
@@ -447,68 +549,8 @@ class CTCForcedAlignerBackend:
                 "state_dp_mode": self.decoder_config.state_dp_mode,
                 "bucket_ms": self.decoder_config.bucket_ms,
                 "max_repair_words": self.decoder_config.max_repair_words,
-                "phrase_trace": [
-                    {
-                        "previous_state_index": pointer[0],
-                        "start_word_index": units[state_index].global_word_index,
-                        "end_word_index": units[state_index].global_word_index,
-                        "start_bucket": pointer[1] if pointer is not None else 0,
-                        "end_bucket": bucket_index + 1,
-                        "repair_width": 1 if pointer is None or pointer[0] is None else abs(state_index - pointer[0]) + 1,
-                    }
-                    for state_index, row in enumerate(decoded.backpointers)
-                    for bucket_index, pointer in enumerate(row[1:], start=0)
-                    if pointer is not None and decoded.bucket_to_state[bucket_index] == state_index
-                ],
-                "decoder_debug": {
-                    "bucket_count": len(scoring_matrix[0]) if scoring_matrix else 0,
-                    "word_count": len(tokens),
-                    "state_count": len(units),
-                    "bucket_ms": self.decoder_config.bucket_ms,
-                    "state_dp_engine": self.decoder_config.state_dp_engine,
-                    "state_dp_mode": self.decoder_config.state_dp_mode,
-                    "bucket_silence_scores": [round(value, 4) for value in bucket_silence_scores],
-                    "state_rows": [
-                        {
-                            "state_index": unit.global_unit_index,
-                            "global_word_index": unit.global_word_index,
-                            "ayah_number": unit.ayah_number,
-                            "char": unit.text,
-                            "grapheme": unit.text,
-                            "unit_kind": unit.kind,
-                            "word": tokens[unit.global_word_index].original_word,
-                            "normalized_word": tokens[unit.global_word_index].normalized_word,
-                            "word_index_in_ayah": tokens[unit.global_word_index].word_index_in_ayah,
-                            "label": (
-                                f"{unit.global_unit_index}: {unit.text} "
-                                f"(w{unit.global_word_index + 1} {tokens[unit.global_word_index].original_word})"
-                            ),
-                            "is_word_start": is_word_start_state[unit.global_unit_index],
-                            "is_word_end": is_word_end_state[unit.global_unit_index],
-                        }
-                        for unit in units
-                    ],
-                    "scoring_matrix": [
-                        [round(value, 4) for value in row]
-                        for row in scoring_matrix
-                    ],
-                    "dp_scores": [
-                        [None if value <= -10.0**18 / 2 else round(value, 4) for value in row]
-                        for row in decoded.dp_scores
-                    ],
-                    "backpointers": [
-                        [
-                            None if pointer is None else {"prev_state_index": pointer[0], "prev_bucket": pointer[1]}
-                            for pointer in row
-                        ]
-                        for row in decoded.backpointers
-                    ],
-                    "bucket_to_state": list(decoded.bucket_to_state),
-                    "bucket_to_word": [
-                        units[state_index].global_word_index
-                        for state_index in decoded.bucket_to_state
-                    ],
-                },
+                "phrase_trace": phrase_trace,
+                "decoder_debug": decoder_debug,
             },
         )
         return populate_path_outputs(result=result, tokens=tokens, frames=frame_alignments, runs=word_runs)
@@ -523,13 +565,15 @@ class CTCForcedAlignerBackend:
         units,
         total_window_ms: int,
         progress_callback=None,
-    ) -> list[list[float]]:
+    ) -> np.ndarray:
         vocab = tokenizer.get_vocab()
         dictionary = {key.lower(): value for key, value in vocab.items()}
         dictionary["<star>"] = len(dictionary)
         token_id_groups = [self._resolve_unit_token_ids(tokenizer, dictionary, unit.text) for unit in units]
         bucket_count = max(1, (total_window_ms + self.decoder_config.bucket_ms - 1) // self.decoder_config.bucket_ms)
-        matrix: list[list[float]] = []
+        n_unit = len(token_id_groups)
+        matrix = np.zeros((n_unit, bucket_count), dtype=np.float64)
+        counts = np.zeros((n_unit, bucket_count), dtype=np.int32)
         for unit_index, token_ids in enumerate(token_id_groups):
             if progress_callback is not None:
                 progress_callback(
@@ -540,17 +584,15 @@ class CTCForcedAlignerBackend:
                         total=len(token_id_groups),
                     )
                 )
-            row = [0.0] * bucket_count
-            bucket_counts = [0] * bucket_count
             for frame_index in range(emissions.shape[0]):
                 frame_center_ms = (frame_index + 0.5) * stride
                 bucket_index = min(bucket_count - 1, int(frame_center_ms // self.decoder_config.bucket_ms))
-                row[bucket_index] += sum(float(emissions[frame_index, token_id].item()) for token_id in token_ids) / max(1, len(token_ids))
-                bucket_counts[bucket_index] += 1
-            for bucket_index, count in enumerate(bucket_counts):
-                if count:
-                    row[bucket_index] /= count
-            matrix.append(row)
+                matrix[unit_index, bucket_index] += sum(
+                    float(emissions[frame_index, token_id].item()) for token_id in token_ids
+                ) / max(1, len(token_ids))
+                counts[unit_index, bucket_index] += 1
+        nz = counts > 0
+        matrix[nz] /= counts[nz].astype(np.float64)
         return matrix
 
     def _resolve_unit_token_ids(self, tokenizer, dictionary: dict[str, int], text: str) -> list[int]:
@@ -680,7 +722,7 @@ class CTCForcedAlignerBackend:
             word_index = unit.global_word_index
             start_ms = start_ms_offset + bucket_index * bucket_ms
             end_ms = start_ms_offset + min(total_window_ms, (bucket_index + 1) * bucket_ms)
-            score = scoring_matrix[state_index][bucket_index]
+            score = score_matrix_at(scoring_matrix, state_index, bucket_index)
             frames.append(
                 FrameAlignment(
                     frame_index=bucket_index,

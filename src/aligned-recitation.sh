@@ -37,6 +37,7 @@ if ! [ "$SURE_INDEX" -ge 1 ] 2>/dev/null || ! [ "$SURE_INDEX" -le 114 ] 2>/dev/n
 fi
 
 ALIGN_DIR="${2:-${ALIGN_DIR:-quran_aligner/out/${SURE_INDEX}-full}}"
+ALIGN_DIR="${ALIGN_DIR%/}"
 if [ ! -d "$ALIGN_DIR" ]; then
   echo "Error: alignment dir not found: $ALIGN_DIR"
   exit 1
@@ -44,7 +45,22 @@ fi
 ALIGN_AUDIO="${ALIGN_AUDIO:-$ALIGN_DIR/audio.mp3}"
 ALIGN_DEBUG_JSON="${ALIGN_DEBUG_JSON:-$ALIGN_DIR/alignment.debug.json}"
 if [ ! -f "$ALIGN_AUDIO" ]; then
+  RUNLOG="$ALIGN_DIR/run.log"
+  if [ -f "$RUNLOG" ]; then
+    RECOVERED=$(grep 'Starting alignment: audio=' "$RUNLOG" 2>/dev/null | tail -1 \
+      | sed -n 's/^.*Starting alignment: audio=\([^ ]*\).*/\1/p')
+    if [ -n "$RECOVERED" ] && [ -f "$RECOVERED" ]; then
+      echo "audio.mp3 missing; linking source from run.log: $RECOVERED"
+      ln -sf "$RECOVERED" "$ALIGN_DIR/audio.mp3"
+      ALIGN_AUDIO="$ALIGN_DIR/audio.mp3"
+    fi
+  fi
+fi
+if [ ! -f "$ALIGN_AUDIO" ]; then
   echo "Error: aligned audio not found: $ALIGN_AUDIO"
+  echo "  - Let quran_aligner align run to completion (audio is copied after alignment.txt)."
+  echo "  - Chain commands with && not ; so this script runs only if align succeeded."
+  echo "  - Or set ALIGN_AUDIO to your source MP3 (e.g. export ALIGN_AUDIO=\"../quran-recitation-playlist/raw/013-....mp3\")."
   exit 1
 fi
 if [ ! -f "$ALIGN_DEBUG_JSON" ]; then

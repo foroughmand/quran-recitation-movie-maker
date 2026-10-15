@@ -14,6 +14,18 @@ from googleapiclient.discovery import build
 import requests
 from googleapiclient.http import MediaFileUpload
 from googleapiclient.errors import HttpError
+from tqdm import tqdm
+
+
+def create_progress_bar(label):
+    return tqdm(
+        total=100.0,
+        desc=label,
+        unit="%",
+        leave=False,
+        dynamic_ncols=True,
+        bar_format="{l_bar}{bar}| {n:6.2f}/{total:.0f}%",
+    )
 
 
 def to_hindi_numerals(number):
@@ -115,10 +127,21 @@ def upload_video(youtube, config):
     )
 
     response = None
-    while response is None:
-        status, response = request.next_chunk()
-        if status:
-            print(f"Uploaded {int(status.progress() * 100)}%")
+    progress_bar = create_progress_bar("Upload")
+    last_progress = 0.0
+    try:
+        while response is None:
+            status, response = request.next_chunk()
+            if status:
+                target = max(0.0, min(100.0, status.progress() * 100.0))
+                increment = max(0.0, target - last_progress)
+                if increment:
+                    progress_bar.update(increment)
+                    last_progress = target
+    finally:
+        if last_progress < 100.0:
+            progress_bar.update(100.0 - last_progress)
+        progress_bar.close()
 
     video_id = response["id"]
     print(f"✅ Upload complete: https://www.youtube.com/watch?v={video_id}")
